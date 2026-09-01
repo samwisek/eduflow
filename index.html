@@ -239,6 +239,10 @@ async function loadGrid(){
   }
 
   gridArea.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;gap:10px;align-items:center;">
+      <span class="save-status" id="bulkStatus" style="font-size:12.5px;">All saved ✓</span>
+      <button class="save-comment-btn" onclick="saveAllScores('${asg.subject_id}')">💾 Save all</button>
+    </div>
     <div class="card">
       <table>
         <thead><tr><th>Student</th><th style="width:110px;">Score (0–100)</th></tr></thead>
@@ -259,6 +263,29 @@ async function loadGrid(){
       </table>
     </div>
   `;
+}
+
+async function saveAllScores(subjectId){
+  const inputs = document.querySelectorAll('.score-input');
+  const rows = [];
+  for(const input of inputs){
+    const val = input.value.trim();
+    if(val===''){ continue; }
+    const score = parseFloat(val);
+    if(isNaN(score) || score<0 || score>100){
+      alert(`Score for one student is invalid (${val}). Fix it before saving all.`);
+      return;
+    }
+    const studentId = input.id.replace('score_','');
+    rows.push({ student_id: studentId, subject_id: subjectId, term_id: selectedTerm, score, entered_by: CURRENT_USER.id });
+  }
+  if(rows.length===0){ alert('No scores entered yet.'); return; }
+  const { error } = await sb.from('marks').upsert(rows, { onConflict: 'student_id,subject_id,term_id' });
+  const statusEl = document.getElementById('bulkStatus');
+  if(error){ alert('Could not save: ' + error.message); return; }
+  inputs.forEach(i=>i.classList.add('saved'));
+  statusEl.classList.add('show');
+  setTimeout(()=>statusEl.classList.remove('show'), 2000);
 }
 
 async function saveScore(studentId, subjectId){
