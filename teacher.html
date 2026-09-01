@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Teacher — Marks Entry</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --chalk-green:#1F3D2B;
+    --chalk-green-light:#2C5540;
+    --dust:#F2EFE6;
+    --paper:#FFFFFF;
+    --pen-red:#C1392B;
+    --pen-red-dark:#a12e22;
+    --rule-blue:#4A6FA5;
+    --ink:#2B2B24;
+    --ink-soft:#6b6a5f;
+    --border:#E1DCC9;
+    --good:#2E7D4F;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'IBM Plex Sans',Segoe UI,Arial,sans-serif;background:var(--dust);color:var(--ink);}
+  h1,h2,h3{font-family:'Zilla Slab',Georgia,serif;}
+  .num{font-family:'IBM Plex Mono',monospace;}
+
+  #loginScreen{
+    min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:var(--chalk-green);
+    background-image:linear-gradient(var(--chalk-green-light) 1px, transparent 1px),linear-gradient(90deg, var(--chalk-green-light) 1px, transparent 1px);
+    background-size:28px 28px;padding:20px;
+  }
+  .login-card{background:var(--dust);border-radius:6px;padding:36px 32px;width:100%;max-width:380px;box-shadow:0 20px 50px rgba(0,0,0,0.35);border-top:6px solid var(--pen-red);}
+  .login-card h1{margin:0 0 4px;font-size:26px;color:var(--chalk-green);}
+  .login-card p.sub{margin:0 0 24px;color:var(--ink-soft);font-size:14px;}
+  label{display:block;font-size:13px;margin:14px 0 6px;color:var(--ink-soft);font-weight:600;}
+  input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:4px;font-size:15px;background:var(--paper);color:var(--ink);font-family:inherit;}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--rule-blue);outline-offset:1px;}
+  button.primary{margin-top:22px;width:100%;padding:12px;background:var(--pen-red);color:#fff;border:none;border-radius:4px;font-size:15px;font-weight:600;cursor:pointer;}
+  button.primary:hover{background:var(--pen-red-dark);}
+  button.primary:disabled{opacity:0.6;}
+  .login-error{color:var(--pen-red);font-size:13px;margin-top:12px;min-height:16px;}
+  .login-note{font-size:12px;color:var(--ink-soft);margin-top:16px;line-height:1.5;}
+
+  #app{display:none;}
+  .topbar{background:var(--chalk-green);color:#fff;padding:16px 22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;}
+  .topbar .brand{font-family:'Zilla Slab',Georgia,serif;font-size:19px;}
+  .topbar .who{font-size:12.5px;color:#c9dccd;}
+  .topbar button{background:transparent;border:1px solid #47654f;color:#e7efe8;padding:7px 14px;border-radius:4px;font-size:12.5px;cursor:pointer;}
+  .topbar button:hover{background:var(--chalk-green-light);}
+
+  .main{max-width:760px;margin:0 auto;padding:24px 18px 60px;}
+  .card{background:var(--paper);border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:18px;}
+  .card-pad{padding:18px;}
+  .picker{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;}
+  .picker select{width:auto;min-width:170px;flex:1;}
+
+  table{width:100%;border-collapse:collapse;font-size:14.5px;}
+  thead th{text-align:left;padding:11px 14px;background:#f8f6ee;color:var(--ink-soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border);}
+  tbody td{padding:9px 14px;border-bottom:1px solid var(--border);vertical-align:middle;}
+  tbody tr:last-child td{border-bottom:none;}
+  .score-input{width:70px;padding:8px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:15px;}
+  .score-input.saved{border-color:var(--good);}
+  .save-status{font-size:11px;color:var(--good);margin-left:8px;opacity:0;transition:opacity .3s;}
+  .save-status.show{opacity:1;}
+  .empty{padding:36px 20px;text-align:center;color:var(--ink-soft);font-size:14px;}
+  .loading{padding:36px 20px;text-align:center;color:var(--ink-soft);font-size:14px;}
+  .banner{background:#fff8e6;border:1px solid #f0dfa0;color:#7a5c00;padding:12px 16px;border-radius:6px;font-size:13.5px;margin-bottom:18px;}
+
+  textarea.comment-box{min-height:64px;resize:vertical;}
+  .comment-row{padding:14px;border-bottom:1px solid var(--border);}
+  .comment-row:last-child{border-bottom:none;}
+  .comment-row .sname{font-weight:600;margin-bottom:6px;}
+  .save-comment-btn{margin-top:8px;padding:6px 14px;font-size:12.5px;border-radius:4px;border:1px solid var(--border);background:#fff;cursor:pointer;}
+  .save-comment-btn:hover{background:#f8f6ee;}
+
+  .section-title{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin:26px 0 10px;font-weight:700;}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="loginScreen">
+  <div class="login-card">
+    <h1>✏️ Teacher Login</h1>
+    <p class="sub">Enter marks & class comments</p>
+    <label>Email</label>
+    <input id="authEmail" type="email" placeholder="you@example.com">
+    <label>Password</label>
+    <input id="authPass" type="password" placeholder="••••••••">
+    <button class="primary" id="authSubmitBtn" onclick="handleSignIn()">Sign in</button>
+    <div class="login-error" id="authError"></div>
+    <div class="login-note">New here? Ask your school admin to set up your login and assign your class and subject.</div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app">
+  <div class="topbar">
+    <div>
+      <div class="brand">✏️ Marks Entry</div>
+      <div class="who" id="whoLine"></div>
+    </div>
+    <button onclick="signOut()">Sign out</button>
+  </div>
+  <div class="main" id="mainContent"></div>
+</div>
+
+<script>
+const SUPABASE_URL = "https://efqstsysxpdkkxiarumf.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmcXN0c3lzeHBka2t4aWFydW1mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MjMyNzcsImV4cCI6MjEwMzM5OTI3N30.J0DrMc3zdbBXkOyoTw3je-GSPnW-ClEYZM16l27Y47k";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let CURRENT_USER=null, CURRENT_PROFILE=null;
+let ASSIGNMENTS=[], CLASSES=[], STREAMS=[], SUBJECTS=[], TERMS=[];
+let selectedAssignment=null, selectedTerm=null;
+
+async function handleSignIn(){
+  const email = document.getElementById('authEmail').value.trim();
+  const pass = document.getElementById('authPass').value;
+  const errEl = document.getElementById('authError');
+  errEl.textContent=''; errEl.style.color='var(--pen-red)';
+  if(!email||!pass){ errEl.textContent='Enter email and password.'; return; }
+  const btn = document.getElementById('authSubmitBtn');
+  btn.disabled = true;
+  try{
+    const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+    if(error) throw error;
+    await afterLogin();
+  }catch(e){
+    errEl.textContent = e.message || 'Something went wrong.';
+    btn.disabled = false;
+  }
+}
+
+async function afterLogin(){
+  const { data:{ user } } = await sb.auth.getUser();
+  CURRENT_USER = user;
+  const { data: profile, error } = await sb.from('profiles').select('*').eq('id',user.id).single();
+  if(error || !profile){
+    document.getElementById('authError').textContent = 'No profile found for this login. Ask the admin to check your account.';
+    document.getElementById('authSubmitBtn').disabled=false;
+    return;
+  }
+  CURRENT_PROFILE = profile;
+  if(profile.role !== 'teacher'){
+    document.getElementById('authError').style.color='var(--ink-soft)';
+    document.getElementById('authError').textContent = 'This is the teacher page. Admins should use admin.html.';
+    document.getElementById('authSubmitBtn').disabled=false;
+    return;
+  }
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('whoLine').textContent = profile.full_name;
+  await loadAssignments();
+}
+
+async function signOut(){ await sb.auth.signOut(); location.reload(); }
+
+(async function init(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(session) await afterLogin();
+})();
+
+/* ============================================================
+   LOAD ASSIGNMENTS
+   ============================================================ */
+async function loadAssignments(){
+  const main = document.getElementById('mainContent');
+  main.innerHTML = '<div class="loading">Loading your classes…</div>';
+
+  const [asg, cls, strm, subj, trm] = await Promise.all([
+    sb.from('teacher_assignments').select('*').eq('teacher_id', CURRENT_USER.id),
+    sb.from('classes').select('*').order('sort_order'),
+    sb.from('streams').select('*'),
+    sb.from('subjects').select('*'),
+    sb.from('terms').select('*').order('year',{ascending:false}),
+  ]);
+  ASSIGNMENTS = asg.data||[];
+  CLASSES = cls.data||[];
+  STREAMS = strm.data||[];
+  SUBJECTS = subj.data||[];
+  TERMS = trm.data||[];
+
+  if(ASSIGNMENTS.length===0){
+    main.innerHTML = `<div class="banner">You haven't been assigned a class or subject yet. Ask your admin to assign you one from the Teachers tab.</div>`;
+    return;
+  }
+
+  const currentTerm = TERMS.find(t=>t.is_current) || TERMS[0];
+  selectedTerm = currentTerm ? currentTerm.id : (TERMS[0] ? TERMS[0].id : null);
+  selectedAssignment = ASSIGNMENTS[0].id;
+
+  renderPicker();
+}
+
+function className(id){ return CLASSES.find(c=>c.id===id)?.name || '—'; }
+function streamName(id){ return STREAMS.find(s=>s.id===id)?.name || ''; }
+function subjectName(id){ return SUBJECTS.find(s=>s.id===id)?.name || '—'; }
+
+function renderPicker(){
+  const main = document.getElementById('mainContent');
+  main.innerHTML = `
+    <div class="picker">
+      ${ASSIGNMENTS.length>1 ? `
+      <select id="asgSelect" onchange="selectedAssignment=this.value; loadGrid();">
+        ${ASSIGNMENTS.map(a=>`<option value="${a.id}" ${a.id===selectedAssignment?'selected':''}>${className(a.class_id)}${a.stream_id?' '+streamName(a.stream_id):''} · ${subjectName(a.subject_id)}</option>`).join('')}
+      </select>` : `<div class="card-pad" style="padding:10px 0;font-weight:600;">${className(ASSIGNMENTS[0].class_id)}${ASSIGNMENTS[0].stream_id?' '+streamName(ASSIGNMENTS[0].stream_id):''} · ${subjectName(ASSIGNMENTS[0].subject_id)}</div>`}
+      <select id="termSelect" onchange="selectedTerm=this.value; loadGrid();">
+        ${TERMS.map(t=>`<option value="${t.id}" ${t.id===selectedTerm?'selected':''}>${t.name} ${t.year}${t.is_current?' (current)':''}</option>`).join('')}
+      </select>
+    </div>
+    <div id="gridArea"></div>
+    <div class="section-title">Class comments</div>
+    <div id="commentsArea" class="card"></div>
+  `;
+  loadGrid();
+  loadComments();
+}
+
+/* ============================================================
+   MARKS GRID
+   ============================================================ */
+async function loadGrid(){
+  const asg = ASSIGNMENTS.find(a=>a.id===selectedAssignment);
+  const gridArea = document.getElementById('gridArea');
+  gridArea.innerHTML = '<div class="loading">Loading students…</div>';
+  if(!asg || !selectedTerm){ gridArea.innerHTML = '<div class="empty">Pick a class and term.</div>'; return; }
+
+  let studentsQuery = sb.from('students').select('*').eq('class_id', asg.class_id).eq('status','active');
+  if(asg.stream_id) studentsQuery = studentsQuery.eq('stream_id', asg.stream_id);
+  const { data: students } = await studentsQuery.order('full_name');
+
+  const { data: marks } = await sb.from('marks').select('*').eq('subject_id', asg.subject_id).eq('term_id', selectedTerm);
+
+  if(!students || students.length===0){
+    gridArea.innerHTML = '<div class="empty">No active students found in this class.</div>';
+    return;
+  }
+
+  gridArea.innerHTML = `
+    <div class="card">
+      <table>
+        <thead><tr><th>Student</th><th style="width:110px;">Score (0–100)</th></tr></thead>
+        <tbody>
+        ${students.map(st=>{
+          const m = (marks||[]).find(mk=>mk.student_id===st.id);
+          return `<tr>
+            <td>${st.full_name}</td>
+            <td>
+              <input type="number" min="0" max="100" class="score-input" id="score_${st.id}"
+                value="${m?m.score:''}" placeholder="—"
+                onchange="saveScore('${st.id}','${asg.subject_id}')">
+              <span class="save-status" id="status_${st.id}">Saved ✓</span>
+            </td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function saveScore(studentId, subjectId){
+  const input = document.getElementById(`score_${studentId}`);
+  const statusEl = document.getElementById(`status_${studentId}`);
+  const val = input.value.trim();
+  if(val==='') return;
+  const score = parseFloat(val);
+  if(isNaN(score) || score<0 || score>100){
+    alert('Score must be a number between 0 and 100.');
+    return;
+  }
+  const { error } = await sb.from('marks').upsert({
+    student_id: studentId,
+    subject_id: subjectId,
+    term_id: selectedTerm,
+    score: score,
+    entered_by: CURRENT_USER.id,
+  }, { onConflict: 'student_id,subject_id,term_id' });
+
+  if(error){ alert('Could not save: ' + error.message); return; }
+  input.classList.add('saved');
+  statusEl.classList.add('show');
+  setTimeout(()=>statusEl.classList.remove('show'), 1500);
+}
+
+/* ============================================================
+   COMMENTS
+   ============================================================ */
+async function loadComments(){
+  const asg = ASSIGNMENTS.find(a=>a.id===selectedAssignment);
+  const area = document.getElementById('commentsArea');
+  if(!asg || !selectedTerm){ area.innerHTML=''; return; }
+  area.innerHTML = '<div class="loading">Loading comments…</div>';
+
+  let studentsQuery = sb.from('students').select('*').eq('class_id', asg.class_id).eq('status','active');
+  if(asg.stream_id) studentsQuery = studentsQuery.eq('stream_id', asg.stream_id);
+  const { data: students } = await studentsQuery.order('full_name');
+  const { data: comments } = await sb.from('report_comments').select('*').eq('term_id', selectedTerm);
+
+  if(!students || students.length===0){ area.innerHTML = '<div class="empty">No students to comment on.</div>'; return; }
+
+  area.innerHTML = students.map(st=>{
+    const c = (comments||[]).find(cm=>cm.student_id===st.id);
+    return `<div class="comment-row">
+      <div class="sname">${st.full_name}</div>
+      <textarea class="comment-box" id="comment_${st.id}" placeholder="e.g. Works hard, needs to be more confident in class discussions...">${c?.class_teacher_comment||''}</textarea>
+      <button class="save-comment-btn" onclick="saveComment('${st.id}')">Save comment</button>
+      <span class="save-status" id="cstatus_${st.id}" style="margin-left:8px;">Saved ✓</span>
+    </div>`;
+  }).join('');
+}
+
+async function saveComment(studentId){
+  const text = document.getElementById(`comment_${studentId}`).value.trim();
+  const statusEl = document.getElementById(`cstatus_${studentId}`);
+  const { data: existing } = await sb.from('report_comments').select('id').eq('student_id',studentId).eq('term_id',selectedTerm).maybeSingle();
+  let error;
+  if(existing){
+    ({error} = await sb.from('report_comments').update({class_teacher_comment:text}).eq('id',existing.id));
+  } else {
+    ({error} = await sb.from('report_comments').insert({student_id:studentId, term_id:selectedTerm, class_teacher_comment:text}));
+  }
+  if(error){ alert('Could not save comment: ' + error.message); return; }
+  statusEl.classList.add('show');
+  setTimeout(()=>statusEl.classList.remove('show'), 1500);
+}
+</script>
+</body>
+</html>
