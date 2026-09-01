@@ -154,10 +154,19 @@
   .subtable{margin-top:10px;border-top:1px solid var(--border);padding-top:10px;}
   .subtable .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13.5px;}
 
-  .grade-A{color:var(--good);font-weight:700;}
-  .grade-B{color:var(--rule-blue);font-weight:700;}
-  .grade-C{color:#b8860b;font-weight:700;}
-  .grade-D{color:var(--pen-red);font-weight:700;}
+  .grade-D1,.grade-D2{color:var(--good);font-weight:700;}
+  .grade-C3,.grade-C4,.grade-C5{color:var(--rule-blue);font-weight:700;}
+  .grade-C6,.grade-P7,.grade-P8{color:#b8860b;font-weight:700;}
+  .grade-F9{color:var(--pen-red);font-weight:700;}
+  .student-photo{width:34px;height:34px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:8px;border:1px solid var(--border);}
+  .student-photo-lg{width:64px;height:64px;border-radius:50%;object-fit:cover;border:2px solid var(--border);float:right;}
+  .photo-preview{width:70px;height:70px;border-radius:50%;object-fit:cover;border:1px solid var(--border);margin-top:8px;display:block;}
+  .subject-checks{display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:8px;margin-top:4px;}
+  .subject-checks label{display:flex;align-items:center;gap:8px;font-weight:500;margin:0;color:var(--ink);font-size:14px;}
+  .subject-checks input{width:auto;}
+  @media print{
+    .report-card-print{page-break-after:always;}
+  }
 
   .report-card{background:#fff;border:1px solid var(--border);border-radius:6px;padding:24px;max-width:560px;margin-top:16px;}
   .report-card h3{color:var(--chalk-green);margin:0 0 2px;}
@@ -241,16 +250,32 @@ const SUPABASE_URL = "https://efqstsysxpdkkxiarumf.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmcXN0c3lzeHBka2t4aWFydW1mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MjMyNzcsImV4cCI6MjEwMzM5OTI3N30.J0DrMc3zdbBXkOyoTw3je-GSPnW-ClEYZM16l27Y47k";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+/* Uganda PLE-style grading: 1 (best) to 9 (fail) per subject */
 const GRADE_BANDS = [
-  {min:80,max:100,grade:'A',comment:'Excellent'},
-  {min:60,max:79,grade:'B',comment:'Very Good'},
-  {min:40,max:59,grade:'C',comment:'Fair'},
-  {min:0,max:39,grade:'D',comment:'Needs Improvement'},
+  {min:85,max:100,grade:'D1',point:1,comment:'Excellent'},
+  {min:70,max:84,grade:'D2',point:2,comment:'Very Good'},
+  {min:60,max:69,grade:'C3',point:3,comment:'Good'},
+  {min:50,max:59,grade:'C4',point:4,comment:'Fairly Good'},
+  {min:45,max:49,grade:'C5',point:5,comment:'Adequate'},
+  {min:40,max:44,grade:'C6',point:6,comment:'Basic'},
+  {min:35,max:39,grade:'P7',point:7,comment:'Pass'},
+  {min:30,max:34,grade:'P8',point:8,comment:'Pass'},
+  {min:0,max:29,grade:'F9',point:9,comment:'Fail'},
 ];
 function gradeFor(score){
-  if(score===null||score===undefined||score==='') return {grade:'-',comment:''};
-  for(const b of GRADE_BANDS){ if(score>=b.min && score<=b.max) return b; }
-  return {grade:'-',comment:''};
+  if(score===null||score===undefined||score==='') return {grade:'-',point:null,comment:''};
+  const s = parseFloat(score);
+  for(const b of GRADE_BANDS){ if(s>=b.min && s<=b.max) return b; }
+  return {grade:'-',point:null,comment:''};
+}
+const CORE_SUBJECTS = ['english','mathematics','integrated science','social studies'];
+function divisionFor(aggregate){
+  if(aggregate>=4 && aggregate<=12) return 'Division One';
+  if(aggregate>=13 && aggregate<=23) return 'Division Two';
+  if(aggregate>=24 && aggregate<=29) return 'Division Three';
+  if(aggregate>=30 && aggregate<=34) return 'Division Four';
+  if(aggregate>=35) return 'Ungraded';
+  return '—';
 }
 
 let CURRENT_USER = null;
@@ -624,7 +649,7 @@ function renderStudents(){
       <table><thead><tr><th>Name</th><th>Class</th><th>Stream</th><th>Gender</th><th>Status</th><th></th></tr></thead>
       <tbody>
       ${filtered.map(s=>`<tr>
-        <td><b>${s.full_name}</b>${s.admission_no?`<div style="font-size:11.5px;color:var(--ink-soft);">#${s.admission_no}</div>`:''}</td>
+        <td>${s.photo_url?`<img src="${s.photo_url}" class="student-photo">`:''}<b>${s.full_name}</b>${s.admission_no?`<div style="font-size:11.5px;color:var(--ink-soft);margin-left:${s.photo_url?'42px':'0'};">#${s.admission_no}</div>`:''}</td>
         <td>${className(s.class_id)}</td>
         <td>${streamName(s.stream_id)||'—'}</td>
         <td>${s.gender||'—'}</td>
@@ -643,6 +668,10 @@ function openStudentModal(id){
     <h3>${row?'Edit':'Add'} Student</h3>
     <label>Full name</label>
     <input id="f_name" value="${row?row.full_name:''}" placeholder="e.g. Okello Peter">
+    <label>Photo (optional)</label>
+    <input id="f_photo" type="file" accept="image/*" onchange="previewPhoto(this)">
+    <img id="photoPreview" class="photo-preview" src="${row&&row.photo_url?row.photo_url:''}" style="display:${row&&row.photo_url?'block':'none'};">
+    <input type="hidden" id="f_photo_url" value="${row&&row.photo_url?row.photo_url:''}">
     <label>Admission No. (optional)</label>
     <input id="f_adm" value="${row?row.admission_no||'':''}">
     <label>Gender</label>
@@ -680,6 +709,16 @@ function openStudentModal(id){
     </div>
   `);
 }
+function previewPhoto(input){
+  if(!input.files || !input.files[0]) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = document.getElementById('photoPreview');
+    img.src = e.target.result;
+    img.style.display = 'block';
+  };
+  reader.readAsDataURL(input.files[0]);
+}
 function refreshStreamOptions(classId){
   const sel = document.getElementById('f_stream');
   const streams = CACHE.streams.filter(s=>s.class_id===classId);
@@ -688,8 +727,25 @@ function refreshStreamOptions(classId){
 async function saveStudent(id){
   const full_name = document.getElementById('f_name').value.trim();
   if(!full_name){ document.getElementById('f_err').textContent='Name is required.'; return; }
+  const errEl = document.getElementById('f_err');
+
+  let photo_url = document.getElementById('f_photo_url').value || null;
+  const fileInput = document.getElementById('f_photo');
+  if(fileInput.files && fileInput.files[0]){
+    errEl.style.color = 'var(--ink-soft)';
+    errEl.textContent = 'Uploading photo…';
+    const file = fileInput.files[0];
+    const path = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'')}`;
+    const { error: upErr } = await sb.storage.from('student-photos').upload(path, file, { upsert:true });
+    if(upErr){ errEl.style.color='var(--pen-red)'; errEl.textContent = 'Photo upload failed: ' + upErr.message; return; }
+    const { data: pub } = sb.storage.from('student-photos').getPublicUrl(path);
+    photo_url = pub.publicUrl;
+    errEl.textContent = '';
+  }
+
   const payload = {
     full_name,
+    photo_url,
     admission_no: document.getElementById('f_adm').value.trim() || null,
     gender: document.getElementById('f_gender').value || null,
     dob: document.getElementById('f_dob').value || null,
@@ -700,7 +756,7 @@ async function saveStudent(id){
     status: document.getElementById('f_status').value,
   };
   const { error } = id ? await sb.from('students').update(payload).eq('id',id) : await sb.from('students').insert(payload);
-  if(error){ document.getElementById('f_err').textContent = error.message; return; }
+  if(error){ errEl.style.color='var(--pen-red)'; errEl.textContent = error.message; return; }
   closeModal(); showTab('students');
 }
 
@@ -722,11 +778,15 @@ function renderTeachers(){
           <td><b>${t.full_name}</b></td>
           <td>${t.phone||'—'}</td>
           <td>${assigns.length? assigns.map(a=>`<span class="pill promoted" style="margin:0 4px 4px 0;display:inline-block;">${className(a.class_id)}${a.stream_id?' '+streamName(a.stream_id):''} · ${subjectName(a.subject_id)}</span>`).join('') : '<span style="color:var(--ink-soft);">none yet</span>'}</td>
-          <td><button class="btn-small" onclick="openAssignModal('${t.id}')">+ Assign</button></td>
+          <td>
+            <button class="btn-small" onclick="openAssignModal('${t.id}')">+ Assign</button>
+            <button class="btn-small danger" onclick="deleteTeacher('${t.id}')">Delete</button>
+          </td>
         </tr>
         ${assigns.map(a=>`<tr><td colspan="4" style="padding:4px 14px 4px 30px;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--ink-soft);">
           ↳ ${className(a.class_id)}${a.stream_id?' ('+streamName(a.stream_id)+')':' (whole class)'} — ${subjectName(a.subject_id)}
-          <button class="btn-small danger" style="margin-left:10px;" onclick="deleteRow('teacher_assignments','${a.id}','assignment')">Remove</button>
+          <button class="btn-small" style="margin-left:10px;" onclick="openReplaceModal('${a.id}')">Replace teacher</button>
+          <button class="btn-small danger" onclick="deleteRow('teacher_assignments','${a.id}','assignment')">Remove</button>
         </td></tr>`).join('')}
         `;
       }).join('') || '<tr><td colspan="4" class="empty">No teachers have signed up yet</td></tr>'}
@@ -736,7 +796,7 @@ function renderTeachers(){
 }
 function openAssignModal(teacherId){
   openModal(`
-    <h3>Assign Class & Subject</h3>
+    <h3>Assign Class & Subject(s)</h3>
     <p style="font-size:13px;color:var(--ink-soft);margin-top:-10px;">${teacherName(teacherId)}</p>
     <label>Class</label>
     <select id="f_class" onchange="refreshAssignStreamOptions(this.value)">
@@ -745,11 +805,10 @@ function openAssignModal(teacherId){
     </select>
     <label>Stream (optional — leave blank for whole class)</label>
     <select id="f_stream"><option value="">Whole class</option></select>
-    <label>Subject</label>
-    <select id="f_subject">
-      <option value="">—</option>
-      ${CACHE.subjects.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}
-    </select>
+    <label>Subject(s) — tick one or more</label>
+    <div class="subject-checks">
+      ${CACHE.subjects.map(s=>`<label><input type="checkbox" class="f_subject_cb" value="${s.id}"> ${s.name}</label>`).join('') || '<span style="color:var(--ink-soft);">No subjects yet — add some first.</span>'}
+    </div>
     <div class="field-error" id="f_err"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -764,10 +823,41 @@ function refreshAssignStreamOptions(classId){
 }
 async function saveAssignment(teacherId){
   const class_id = document.getElementById('f_class').value;
-  const subject_id = document.getElementById('f_subject').value;
   const stream_id = document.getElementById('f_stream').value || null;
-  if(!class_id || !subject_id){ document.getElementById('f_err').textContent='Class and subject are required.'; return; }
-  const { error } = await sb.from('teacher_assignments').insert({teacher_id:teacherId, class_id, subject_id, stream_id});
+  const subjectIds = Array.from(document.querySelectorAll('.f_subject_cb:checked')).map(cb=>cb.value);
+  if(!class_id || subjectIds.length===0){ document.getElementById('f_err').textContent='Class and at least one subject are required.'; return; }
+  const rows = subjectIds.map(subject_id => ({teacher_id:teacherId, class_id, subject_id, stream_id}));
+  const { error } = await sb.from('teacher_assignments').insert(rows);
+  if(error){ document.getElementById('f_err').textContent = error.message; return; }
+  closeModal(); showTab('teachers');
+}
+
+async function deleteTeacher(teacherId){
+  if(!confirm(`Delete ${teacherName(teacherId)}? This removes them from the system and all their class/subject assignments. It does NOT delete their login — do that separately in Supabase Authentication → Users if needed.`)) return;
+  const { error } = await sb.from('profiles').delete().eq('id', teacherId);
+  if(error){ alert(error.message); return; }
+  showTab('teachers');
+}
+function openReplaceModal(assignmentId){
+  const a = CACHE.assignments.find(x=>x.id===assignmentId);
+  openModal(`
+    <h3>Replace Teacher</h3>
+    <p style="font-size:13px;color:var(--ink-soft);margin-top:-10px;">${className(a.class_id)}${a.stream_id?' ('+streamName(a.stream_id)+')':''} — ${subjectName(a.subject_id)}</p>
+    <label>New teacher</label>
+    <select id="f_newteacher">
+      ${CACHE.teachers.map(t=>`<option value="${t.id}" ${t.id===a.teacher_id?'selected':''}>${t.full_name}</option>`).join('') || '<option value="">No teachers available</option>'}
+    </select>
+    <div class="field-error" id="f_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-add" onclick="saveReplace('${assignmentId}')">Replace</button>
+    </div>
+  `);
+}
+async function saveReplace(assignmentId){
+  const newTeacherId = document.getElementById('f_newteacher').value;
+  if(!newTeacherId){ document.getElementById('f_err').textContent='Pick a teacher.'; return; }
+  const { error } = await sb.from('teacher_assignments').update({teacher_id:newTeacherId}).eq('id',assignmentId);
   if(error){ document.getElementById('f_err').textContent = error.message; return; }
   closeModal(); showTab('teachers');
 }
@@ -804,6 +894,9 @@ async function loadClassMarks(){
   const subjectsUsed = CACHE.subjects;
 
   area.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+      <button class="btn btn-ghost" onclick="printAllReports()">🖨️ Print all report cards for this class</button>
+    </div>
     <div class="card">
       <table>
         <thead><tr><th>Student</th>${subjectsUsed.map(s=>`<th class="num">${s.code||s.name}</th>`).join('')}<th class="num">Avg</th><th></th></tr></thead>
@@ -828,39 +921,78 @@ async function loadClassMarks(){
     <div id="reportCardArea"></div>
   `;
 }
+function buildReportCardHTML(student, marks, commentRow, term){
+  const rows = (marks||[]).map(m=>{
+    const g = gradeFor(parseFloat(m.score));
+    return `<tr><td>${subjectName(m.subject_id)}</td><td class="num">${m.score}</td><td class="num grade-${g.grade}">${g.grade}</td><td>${g.comment}</td></tr>`;
+  }).join('') || `<tr><td colspan="4" class="empty">No marks entered yet for this term</td></tr>`;
+
+  const coreMarks = (marks||[]).filter(m => {
+    const n = (subjectName(m.subject_id)||'').toLowerCase();
+    return CORE_SUBJECTS.some(keyword => n.includes(keyword));
+  });
+  let aggregateBlock = '';
+  if(coreMarks.length === CORE_SUBJECTS.length){
+    const aggregate = coreMarks.reduce((sum,m)=> sum + (gradeFor(parseFloat(m.score)).point||0), 0);
+    aggregateBlock = `<div style="margin-top:10px;font-size:14px;"><b>Aggregate: ${aggregate}</b> — <b>${divisionFor(aggregate)}</b></div>`;
+  }
+
+  const validScores = (marks||[]).map(m=>parseFloat(m.score));
+  const avg = validScores.length ? (validScores.reduce((a,b)=>a+b,0)/validScores.length).toFixed(1) : '—';
+
+  return `
+    <div class="report-card report-card-print">
+      ${student.photo_url?`<img src="${student.photo_url}" class="student-photo-lg">`:''}
+      <h3>${student.full_name}</h3>
+      <div class="meta">${className(student.class_id)}${student.stream_id?' '+streamName(student.stream_id):''} · ${term?term.name+' '+term.year:''}${student.admission_no?' · Adm# '+student.admission_no:''}</div>
+      <table>
+        <thead><tr><th>Subject</th><th class="num">Score</th><th class="num">Grade</th><th>Remark</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="margin-top:10px;font-size:14px;">Average: ${avg}%</div>
+      ${aggregateBlock}
+      <div class="comments">
+        <div><b>Class teacher's comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+        <div style="margin-top:6px;"><b>Head teacher's comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+      </div>
+    </div>
+  `;
+}
+
 async function openReportCard(studentId){
   const student = CACHE.students.find(s=>s.id===studentId);
   const { data: marks } = await sb.from('marks').select('*').eq('student_id',studentId).eq('term_id',reportTerm);
   const { data: commentRow } = await sb.from('report_comments').select('*').eq('student_id',studentId).eq('term_id',reportTerm).maybeSingle();
   const term = CACHE.terms.find(t=>t.id===reportTerm);
 
-  const rows = (marks||[]).map(m=>{
-    const g = gradeFor(parseFloat(m.score));
-    return `<tr><td>${subjectName(m.subject_id)}</td><td class="num">${m.score}</td><td class="grade-${g.grade}">${g.grade}</td><td>${g.comment}</td></tr>`;
-  }).join('') || `<tr><td colspan="4" class="empty">No marks entered yet for this term</td></tr>`;
-
-  const validScores = (marks||[]).map(m=>parseFloat(m.score));
-  const avg = validScores.length ? (validScores.reduce((a,b)=>a+b,0)/validScores.length).toFixed(1) : '—';
-
   document.getElementById('reportCardArea').innerHTML = `
-    <div class="report-card" id="printableReport">
-      <h3>${student.full_name}</h3>
-      <div class="meta">${className(student.class_id)}${student.stream_id?' '+streamName(student.stream_id):''} · ${term?term.name+' '+term.year:''}${student.admission_no?' · Adm# '+student.admission_no:''}</div>
-      <table>
-        <thead><tr><th>Subject</th><th class="num">Score</th><th>Grade</th><th>Remark</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div style="margin-top:10px;font-size:14px;"><b>Average: ${avg}</b></div>
-      <div class="comments">
-        <div><b>Class teacher's comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
-        <div style="margin-top:6px;"><b>Head teacher's comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
-      </div>
-    </div>
+    <div id="printableReport">${buildReportCardHTML(student, marks, commentRow, term)}</div>
     <div id="printBtnWrap" style="margin-top:14px;display:flex;gap:10px;">
       <button class="btn btn-ghost" onclick="window.print()">Print report card</button>
       <button class="btn btn-ghost" onclick="openCommentsModal('${studentId}')">Edit comments</button>
     </div>
   `;
+}
+
+async function printAllReports(){
+  const studentsInClass = CACHE.students.filter(s=>s.class_id===reportClass && s.status==='active');
+  if(studentsInClass.length===0){ alert('No active students in this class.'); return; }
+  const term = CACHE.terms.find(t=>t.id===reportTerm);
+
+  const [{data: allMarks}, {data: allComments}] = await Promise.all([
+    sb.from('marks').select('*').eq('term_id', reportTerm),
+    sb.from('report_comments').select('*').eq('term_id', reportTerm),
+  ]);
+
+  const html = studentsInClass.map(st=>{
+    const marks = (allMarks||[]).filter(m=>m.student_id===st.id);
+    const commentRow = (allComments||[]).find(c=>c.student_id===st.id);
+    return buildReportCardHTML(st, marks, commentRow, term);
+  }).join('');
+
+  document.getElementById('reportCardArea').innerHTML = `<div id="printableReport">${html}</div>
+    <div id="printBtnWrap" style="margin-top:14px;"><button class="btn btn-ghost" onclick="window.print()">Print all ${studentsInClass.length} report cards</button></div>`;
+  window.print();
 }
 function openCommentsModal(studentId){
   sb.from('report_comments').select('*').eq('student_id',studentId).eq('term_id',reportTerm).maybeSingle().then(({data:row})=>{
