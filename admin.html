@@ -342,19 +342,29 @@ async function handleAuthSubmit(){
     if(authMode === 'signup'){
       const name = document.getElementById('signupName').value.trim();
       if(!name){ errEl.textContent = 'Enter your full name.'; btn.disabled=false; return; }
-      const { data, error } = await sb.auth.signUp({ email, password: pass });
+      const { data, error } = await sb.auth.signUp({
+        email, password: pass,
+        options: { data: { full_name: name, self_registered: true } }
+      });
       if(error) throw error;
-      if(data.user){
+
+      if(data.session){
+        // Email confirmation is off — logged in immediately, create profile now.
         const { error: profErr } = await sb.from('profiles').insert({
           id: data.user.id, full_name: name, role: 'teacher'
         });
         if(profErr) throw profErr;
+        await afterLogin();
+        return;
+      } else {
+        // Email confirmation is on — no session yet. The profile will be
+        // created automatically the first time they successfully sign in.
+        errEl.style.color = 'var(--good)';
+        errEl.textContent = 'Account created. Check your email to confirm it, then sign in.';
+        setAuthMode('signin');
+        btn.disabled=false;
+        return;
       }
-      errEl.style.color = 'var(--good)';
-      errEl.textContent = 'Account created. If email confirmation is on, check your inbox, then sign in.';
-      setAuthMode('signin');
-      btn.disabled=false;
-      return;
     } else {
       const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
       if(error) throw error;
@@ -370,7 +380,21 @@ async function handleAuthSubmit(){
 async function afterLogin(){
   const { data:{ user } } = await sb.auth.getUser();
   CURRENT_USER = user;
-  const { data: profile, error } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  let { data: profile, error } = await sb.from('profiles').select('*').eq('id', user.id).single();
+
+  if((error || !profile) && user.user_metadata?.self_registered){
+    // First successful login after a self sign-up (e.g. post email-confirmation).
+    // Create their profile now that we have a real authenticated session.
+    const { error: createErr } = await sb.from('profiles').insert({
+      id: user.id,
+      full_name: user.user_metadata.full_name || user.email,
+      role: 'teacher'
+    });
+    if(!createErr){
+      ({ data: profile, error } = await sb.from('profiles').select('*').eq('id', user.id).single());
+    }
+  }
+
   if(error || !profile){
     document.getElementById('authError').textContent = 'No profile found for this login. Ask the admin to check your account.';
     return;
@@ -1152,7 +1176,7 @@ async function exportClassMarksCSV(){
   });
   downloadCSV(`${className(reportClass)}_${term?term.name+'_'+term.year:'marks'}.csv`, rows);
 }
-function buildReportCardHTML(student, marks, commentRow, term){
+function buildReportCardHTML(student, marks, commentRow, term, posInfo){
   const rows = (marks||[]).map(m=>{
     const g = gradeFor(parseFloat(m.score));
     return `<tr><td>${subjectName(m.subject_id)}</td><td class="num">${m.score}</td><td class="num grade-${g.grade}">${g.grade}</td><td>${g.comment}</td></tr>`;
@@ -1165,11 +1189,15 @@ function buildReportCardHTML(student, marks, commentRow, term){
   let aggregateBlock = '';
   if(coreMarks.length === CORE_SUBJECTS.length){
     const aggregate = coreMarks.reduce((sum,m)=> sum + (gradeFor(parseFloat(m.score)).point||0), 0);
-    aggregateBlock = `<div style="margin-top:10px;font-size:14px;"><b>Aggregate: ${aggregate}</b> — <b>${divisionFor(aggregate)}</b></div>`;
+    aggregateBlock = `<div style="margin-top:6px;font-size:14px;"><b>Aggregate: ${aggregate}</b> — <b>${divisionFor(aggregate)}</b></div>`;
   }
 
   const validScores = (marks||[]).map(m=>parseFloat(m.score));
   const avg = validScores.length ? (validScores.reduce((a,b)=>a+b,0)/validScores.length).toFixed(1) : '—';
+
+  const positionBlock = posInfo
+    ? `<div style="margin-top:6px;font-size:14px;"><b>Position: ${ordinal(posInfo.position)} out of ${posInfo.total}</b></div>`
+    : `<div style="margin-top:6px;font-size:12.5px;color:var(--ink-soft);">Position not available (no marks entered yet)</div>`;
 
   return `
     <div class="report-card report-card-print">
@@ -1184,6 +1212,7 @@ function buildReportCardHTML(student, marks, commentRow, term){
         <tbody>${rows}</tbody>
       </table>
       <div style="margin-top:10px;font-size:14px;">Average: ${avg}%</div>
+      ${positionBlock}
       ${aggregateBlock}
       <div class="comments">
         <div><b>Class teacher's comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
@@ -1193,14 +1222,43 @@ function buildReportCardHTML(student, marks, commentRow, term){
   `;
 }
 
+function ordinal(n){
+  const s = ['th','st','nd','rd'];
+  const v = n % 100;
+  return n + (s[(v-20)%10] || s[v] || s[0]);
+}
+
+/* Ranks every active student in a class by their average score for a term.
+   Ties share the same position (1,2,2,4 style). Students with no marks
+   entered yet are excluded from ranking. */
+async function computeClassPositions(classId, termId){
+  const studentsInClass = CACHE.students.filter(s=>s.class_id===classId && s.status==='active');
+  if(studentsInClass.length===0) return {};
+  const { data: marks } = await sb.from('marks').select('*').eq('term_id', termId).in('student_id', studentsInClass.map(s=>s.id));
+  const stats = studentsInClass.map(st=>{
+    const own = (marks||[]).filter(m=>m.student_id===st.id).map(m=>parseFloat(m.score));
+    const avg = own.length ? own.reduce((a,b)=>a+b,0)/own.length : null;
+    return { id: st.id, avg };
+  });
+  const ranked = stats.filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg);
+  const posMap = {};
+  let lastAvg=null, lastPos=0;
+  ranked.forEach((s,i)=>{
+    if(s.avg!==lastAvg){ lastPos = i+1; lastAvg = s.avg; }
+    posMap[s.id] = { position: lastPos, total: ranked.length };
+  });
+  return posMap;
+}
+
 async function openReportCard(studentId){
   const student = CACHE.students.find(s=>s.id===studentId);
   const { data: marks } = await sb.from('marks').select('*').eq('student_id',studentId).eq('term_id',reportTerm);
   const { data: commentRow } = await sb.from('report_comments').select('*').eq('student_id',studentId).eq('term_id',reportTerm).maybeSingle();
   const term = CACHE.terms.find(t=>t.id===reportTerm);
+  const posMap = await computeClassPositions(student.class_id, reportTerm);
 
   document.getElementById('reportCardArea').innerHTML = `
-    <div id="printableReport">${buildReportCardHTML(student, marks, commentRow, term)}</div>
+    <div id="printableReport">${buildReportCardHTML(student, marks, commentRow, term, posMap[studentId])}</div>
     <div id="printBtnWrap" style="margin-top:14px;display:flex;gap:10px;">
       <button class="btn btn-ghost" onclick="window.print()">Print report card</button>
       <button class="btn btn-ghost" onclick="openCommentsModal('${studentId}')">Edit comments</button>
@@ -1213,15 +1271,16 @@ async function printAllReports(){
   if(studentsInClass.length===0){ alert('No active students in this class.'); return; }
   const term = CACHE.terms.find(t=>t.id===reportTerm);
 
-  const [{data: allMarks}, {data: allComments}] = await Promise.all([
+  const [{data: allMarks}, {data: allComments}, posMap] = await Promise.all([
     sb.from('marks').select('*').eq('term_id', reportTerm),
     sb.from('report_comments').select('*').eq('term_id', reportTerm),
+    computeClassPositions(reportClass, reportTerm),
   ]);
 
   const html = studentsInClass.map(st=>{
     const marks = (allMarks||[]).filter(m=>m.student_id===st.id);
     const commentRow = (allComments||[]).find(c=>c.student_id===st.id);
-    return buildReportCardHTML(st, marks, commentRow, term);
+    return buildReportCardHTML(st, marks, commentRow, term, posMap[st.id]);
   }).join('');
 
   document.getElementById('reportCardArea').innerHTML = `<div id="printableReport">${html}</div>
