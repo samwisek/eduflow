@@ -184,7 +184,10 @@
     .main{padding:18px;}
   }
   @media print{
-    .sidebar,.topline .btn,#printBtnWrap{display:none !important;}
+    .sidebar,.topline,.filters,#printBtnWrap,.card{display:none !important;}
+    body *{visibility:hidden;}
+    #printableReport,#printableReport *{visibility:visible;}
+    #printableReport{position:absolute;top:0;left:0;width:100%;}
     .main{padding:0;max-width:none;}
     body{background:#fff;}
   }
