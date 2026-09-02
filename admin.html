@@ -230,6 +230,7 @@
       <button class="navbtn" data-tab="terms" onclick="showTab('terms')">Terms</button>
       <button class="navbtn" data-tab="students" onclick="showTab('students')">Students</button>
       <button class="navbtn" data-tab="teachers" onclick="showTab('teachers')">Teachers</button>
+      <button class="navbtn" data-tab="attendance" onclick="showTab('attendance')">Attendance</button>
       <button class="navbtn" data-tab="reports" onclick="showTab('reports')">Reports</button>
       <button class="signout" onclick="signOut()">Sign out</button>
     </div>
@@ -407,6 +408,7 @@ const RENDERERS = {
   terms: renderTerms,
   students: renderStudents,
   teachers: renderTeachers,
+  attendance: renderAttendance,
   reports: renderReports,
 };
 async function showTab(tab){
@@ -434,6 +436,18 @@ function renderDashboard(){
     <div style="margin-top:24px;" class="card">
       <table><thead><tr><th>Current term</th></tr></thead>
       <tbody><tr><td>${currentTerm ? currentTerm.name+' '+currentTerm.year : 'No term marked as current — set one in the Terms tab'}</td></tr></tbody></table>
+    </div>
+    <div class="section-title" style="margin-top:24px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);font-weight:700;">Students per class</div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Class</th><th class="num">Active students</th></tr></thead>
+        <tbody>
+        ${CACHE.classes.map(c=>{
+          const count = CACHE.students.filter(s=>s.class_id===c.id && s.status==='active').length;
+          return `<tr><td>${c.name}</td><td class="num">${count}</td></tr>`;
+        }).join('') || '<tr><td colspan="2" class="empty">No classes yet</td></tr>'}
+        </tbody>
+      </table>
     </div>
   `;
 }
@@ -860,6 +874,58 @@ async function saveReplace(assignmentId){
   const { error } = await sb.from('teacher_assignments').update({teacher_id:newTeacherId}).eq('id',assignmentId);
   if(error){ document.getElementById('f_err').textContent = error.message; return; }
   closeModal(); showTab('teachers');
+}
+
+/* ============================================================
+   ATTENDANCE
+   ============================================================ */
+let attClass='', attDate='';
+function renderAttendance(){
+  const main = document.getElementById('mainContent');
+  if(!attDate) attDate = new Date().toISOString().slice(0,10);
+  main.innerHTML = `
+    <div class="topline"><div><h2>Attendance</h2><p>Roll call records kept by teachers, viewable by date and class</p></div></div>
+    <div class="filters">
+      <select id="attClassSelect" onchange="attClass=this.value; loadAttendance();">
+        <option value="">Choose class…</option>
+        ${CACHE.classes.map(c=>`<option value="${c.id}" ${attClass===c.id?'selected':''}>${c.name}</option>`).join('')}
+      </select>
+      <input type="date" id="attDateInput" value="${attDate}" onchange="attDate=this.value; loadAttendance();" style="width:auto;">
+    </div>
+    <div id="attArea"></div>
+  `;
+  if(attClass) loadAttendance();
+}
+async function loadAttendance(){
+  const area = document.getElementById('attArea');
+  area.innerHTML = '<div class="loading">Loading…</div>';
+  const studentsInClass = CACHE.students.filter(s=>s.class_id===attClass && s.status==='active');
+  const { data: records } = await sb.from('attendance').select('*').eq('date', attDate).in('student_id', studentsInClass.length ? studentsInClass.map(s=>s.id) : ['00000000-0000-0000-0000-000000000000']);
+
+  const present = (records||[]).filter(r=>r.status==='present').length;
+  const absent = (records||[]).filter(r=>r.status==='absent').length;
+  const notMarked = studentsInClass.length - present - absent;
+
+  area.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:18px;">
+      ${statCard('Total students', studentsInClass.length)}
+      ${statCard('Present', present)}
+      ${statCard('Absent', absent)}
+      ${statCard('Not marked', notMarked)}
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Student</th><th>Status</th><th>Marked by</th></tr></thead>
+        <tbody>
+        ${studentsInClass.map(st=>{
+          const rec = (records||[]).find(r=>r.student_id===st.id);
+          const pill = rec ? `<span class="pill ${rec.status==='present'?'active':'left'}">${rec.status}</span>` : '<span style="color:var(--ink-soft);">not marked</span>';
+          return `<tr><td>${st.full_name}</td><td>${pill}</td><td>${rec?teacherName(rec.marked_by):'—'}</td></tr>`;
+        }).join('') || '<tr><td colspan="3" class="empty">No active students in this class</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 /* ============================================================
