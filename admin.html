@@ -26,6 +26,8 @@
     font-family:'IBM Plex Sans',Segoe UI,Arial,sans-serif;
     background:var(--dust);
     color:var(--ink);
+    overflow-x:hidden;
+    -webkit-text-size-adjust:100%;
   }
   @font-face{}
   h1,h2,h3,.brand{
@@ -74,7 +76,7 @@
   label{display:block;font-size:13px;margin:14px 0 6px;color:var(--ink-soft);font-weight:600;}
   input,select,textarea{
     width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:4px;
-    font-size:15px;background:var(--paper);color:var(--ink);font-family:inherit;
+    font-size:16px;background:var(--paper);color:var(--ink);font-family:inherit;
   }
   input:focus,select:focus,textarea:focus{outline:2px solid var(--rule-blue);outline-offset:1px;}
   button.primary{
@@ -113,17 +115,19 @@
   .btn-add:hover{background:var(--pen-red-dark);}
   .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--ink);}
   .btn-ghost:hover{background:#fff;}
-  .btn-small{padding:5px 10px;font-size:12.5px;border-radius:4px;border:1px solid var(--border);background:#fff;cursor:pointer;margin-right:6px;}
+  .btn-small{padding:7px 12px;font-size:12.5px;border-radius:4px;border:1px solid var(--border);background:#fff;cursor:pointer;margin-right:6px;min-height:32px;}
   .btn-small.danger{color:var(--pen-red);border-color:#e8c3bd;}
   .btn-small.danger:hover{background:#fdecea;}
 
-  .card{background:var(--paper);border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+  .card{background:var(--paper);border:1px solid var(--border);border-radius:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;overflow-y:hidden;}
   table{width:100%;border-collapse:collapse;font-size:14px;}
   thead th{
     text-align:left;padding:11px 14px;background:#f8f6ee;color:var(--ink-soft);
     font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border);
+    white-space:nowrap;
   }
-  tbody td{padding:11px 14px;border-bottom:1px solid var(--border);}
+  tbody td{padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap;}
+  tbody td.wrap-cell{white-space:normal;}
   tbody tr:last-child td{border-bottom:none;}
   tbody tr:hover{background:#fbfaf5;}
   .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600;}
@@ -179,9 +183,16 @@
     .shell{flex-direction:column;}
     .sidebar{width:100%;height:auto;position:relative;display:flex;flex-wrap:wrap;gap:4px;padding:14px;}
     .sidebar .brand,.sidebar .brand-sub{width:100%;}
-    .navbtn{width:auto;flex:1 1 auto;text-align:center;font-size:13px;padding:9px 8px;}
+    .navbtn{width:auto;flex:1 1 auto;text-align:center;font-size:13px;padding:10px 8px;min-height:40px;}
     .sidebar .signout{width:auto;margin-left:auto;}
-    .main{padding:18px;}
+    .main{padding:14px;}
+    .topline{gap:12px;}
+    .topline h2{font-size:20px;}
+    .modal{padding:22px 18px 20px;}
+    .login-card{padding:28px 20px;}
+  }
+  @media(max-width:420px){
+    .filters select,.filters input{min-width:0;flex:1 1 100%;}
   }
   @media print{
     .sidebar,.topline,.filters,#printBtnWrap,.card{display:none !important;}
@@ -857,13 +868,13 @@ function renderTeachers(){
         return `<tr>
           <td><b>${t.full_name}</b></td>
           <td>${t.phone||'—'}</td>
-          <td>${assigns.length? assigns.map(a=>`<span class="pill promoted" style="margin:0 4px 4px 0;display:inline-block;">${className(a.class_id)}${a.stream_id?' '+streamName(a.stream_id):''} · ${subjectName(a.subject_id)}</span>`).join('') : '<span style="color:var(--ink-soft);">none yet</span>'}</td>
+          <td class="wrap-cell">${assigns.length? assigns.map(a=>`<span class="pill promoted" style="margin:0 4px 4px 0;display:inline-block;">${className(a.class_id)}${a.stream_id?' '+streamName(a.stream_id):''} · ${subjectName(a.subject_id)}</span>`).join('') : '<span style="color:var(--ink-soft);">none yet</span>'}</td>
           <td>
             <button class="btn-small" onclick="openAssignModal('${t.id}')">+ Assign</button>
             <button class="btn-small danger" onclick="deleteTeacher('${t.id}')">Delete</button>
           </td>
         </tr>
-        ${assigns.map(a=>`<tr><td colspan="4" style="padding:4px 14px 4px 30px;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--ink-soft);">
+        ${assigns.map(a=>`<tr><td colspan="4" class="wrap-cell" style="padding:4px 14px 4px 30px;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--ink-soft);">
           ↳ ${className(a.class_id)}${a.stream_id?' ('+streamName(a.stream_id)+')':' (whole class)'} — ${subjectName(a.subject_id)}
           <button class="btn-small" style="margin-left:10px;" onclick="openReplaceModal('${a.id}')">Replace teacher</button>
           <button class="btn-small danger" onclick="deleteRow('teacher_assignments','${a.id}','assignment')">Remove</button>
