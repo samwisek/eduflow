@@ -85,7 +85,7 @@
 <!-- ============ LOGIN ============ -->
 <div id="loginScreen">
   <div class="login-card">
-    <h1>✏️ Teacher Login</h1>
+    <h1>✏️ <span id="brandName">Teacher Login</span></h1>
     <p class="sub">Enter marks & class comments</p>
     <label>Email</label>
     <input id="authEmail" type="email" placeholder="you@example.com">
@@ -93,6 +93,7 @@
     <input id="authPass" type="password" placeholder="••••••••">
     <button class="primary" id="authSubmitBtn" onclick="handleSignIn()">Sign in</button>
     <div class="login-error" id="authError"></div>
+    <div style="text-align:center;margin-top:10px;"><a href="#" onclick="handleForgotPassword();return false;" style="font-size:12.5px;color:var(--rule-blue);">Forgot password?</a></div>
     <div class="login-note">New here? Ask your school admin to set up your login and assign your class and subject.</div>
   </div>
 </div>
@@ -117,6 +118,24 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let CURRENT_USER=null, CURRENT_PROFILE=null;
 let ASSIGNMENTS=[], CLASSES=[], STREAMS=[], SUBJECTS=[], TERMS=[];
 let selectedAssignment=null, selectedTerm=null;
+
+async function handleForgotPassword(){
+  const email = document.getElementById('authEmail').value.trim();
+  if(!email){ alert('Type your email in the Email field first, then click "Forgot password?"'); return; }
+  const redirectTo = location.href.replace(/teacher\.html.*$/, 'reset-password.html');
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if(error){ alert(error.message); return; }
+  alert('If that email has an account, a password reset link has been sent. Check your inbox.');
+}
+
+async function loadBranding(){
+  const { data } = await sb.from('school_settings').select('*').eq('id',1).maybeSingle();
+  if(data && data.school_name){
+    document.getElementById('brandName').textContent = data.school_name;
+    document.title = data.school_name + ' — Teacher';
+  }
+}
+loadBranding();
 
 async function handleSignIn(){
   const email = document.getElementById('authEmail').value.trim();
