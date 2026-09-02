@@ -226,6 +226,7 @@
       <div class="brand-sub">Baby Class – P7</div>
       <button class="navbtn" data-tab="dashboard" onclick="showTab('dashboard')">Dashboard</button>
       <button class="navbtn" data-tab="classes" onclick="showTab('classes')">Classes & Streams</button>
+      <button class="navbtn" data-tab="promote" onclick="showTab('promote')">Promote Students</button>
       <button class="navbtn" data-tab="subjects" onclick="showTab('subjects')">Subjects</button>
       <button class="navbtn" data-tab="terms" onclick="showTab('terms')">Terms</button>
       <button class="navbtn" data-tab="students" onclick="showTab('students')">Students</button>
@@ -404,6 +405,7 @@ function teacherName(id){ return CACHE.teachers.find(t=>t.id===id)?.full_name ||
 const RENDERERS = {
   dashboard: renderDashboard,
   classes: renderClasses,
+  promote: renderPromote,
   subjects: renderSubjects,
   terms: renderTerms,
   students: renderStudents,
@@ -874,6 +876,92 @@ async function saveReplace(assignmentId){
   const { error } = await sb.from('teacher_assignments').update({teacher_id:newTeacherId}).eq('id',assignmentId);
   if(error){ document.getElementById('f_err').textContent = error.message; return; }
   closeModal(); showTab('teachers');
+}
+
+/* ============================================================
+   PROMOTE STUDENTS
+   ============================================================ */
+let promoteFromClass='';
+function nextClassFor(classId){
+  const sorted = [...CACHE.classes].sort((a,b)=>a.sort_order-b.sort_order);
+  const idx = sorted.findIndex(c=>c.id===classId);
+  if(idx===-1) return null;
+  return sorted[idx+1] || null; // null = final class (e.g. P7)
+}
+function renderPromote(){
+  const main = document.getElementById('mainContent');
+  main.innerHTML = `
+    <div class="topline"><div><h2>Promote Students</h2><p>Move a whole class up to the next class at the end of the year</p></div></div>
+    <div class="filters">
+      <select id="promoteClassSelect" onchange="promoteFromClass=this.value; renderPromoteList();">
+        <option value="">Choose class to promote…</option>
+        ${CACHE.classes.map(c=>`<option value="${c.id}" ${promoteFromClass===c.id?'selected':''}>${c.name}</option>`).join('')}
+      </select>
+    </div>
+    <div id="promoteArea"></div>
+  `;
+  if(promoteFromClass) renderPromoteList();
+}
+function renderPromoteList(){
+  const area = document.getElementById('promoteArea');
+  const students = CACHE.students.filter(s=>s.class_id===promoteFromClass && s.status==='active');
+  const next = nextClassFor(promoteFromClass);
+
+  if(students.length===0){ area.innerHTML = '<div class="empty">No active students in this class.</div>'; return; }
+
+  area.innerHTML = `
+    <div class="banner">
+      ${next
+        ? `These students will move from <b>${className(promoteFromClass)}</b> to <b>${next.name}</b>. Untick anyone repeating the class.`
+        : `<b>${className(promoteFromClass)}</b> is the final class — these students will be marked as completed/promoted and removed from the active roll (their records stay in the system). Untick anyone repeating.`
+      }
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th style="width:36px;"><input type="checkbox" checked onchange="toggleAllPromote(this)"></th><th>Student</th><th>Current stream</th></tr></thead>
+        <tbody>
+        ${students.map(st=>`<tr>
+          <td><input type="checkbox" class="promote-cb" value="${st.id}" checked></td>
+          <td>${st.full_name}</td>
+          <td>${streamName(st.stream_id)||'—'}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:14px;">
+      <button class="btn btn-add" onclick="runPromotion()">Promote ${students.length} checked students</button>
+    </div>
+  `;
+}
+function toggleAllPromote(master){
+  document.querySelectorAll('.promote-cb').forEach(cb=>cb.checked = master.checked);
+}
+async function runPromotion(){
+  const checked = Array.from(document.querySelectorAll('.promote-cb:checked')).map(cb=>cb.value);
+  if(checked.length===0){ alert('No students selected.'); return; }
+  const next = nextClassFor(promoteFromClass);
+  if(!confirm(`Promote ${checked.length} student(s)${next? ' to '+next.name : ' as completed/graduated'}? This cannot be undone automatically.`)) return;
+
+  let error;
+  if(next){
+    // try to match a stream of the same name in the destination class; else leave blank
+    for(const studentId of checked){
+      const st = CACHE.students.find(s=>s.id===studentId);
+      const curStreamName = streamName(st.stream_id);
+      const matchStream = curStreamName ? CACHE.streams.find(s=>s.class_id===next.id && s.name===curStreamName) : null;
+      const { error: e } = await sb.from('students').update({
+        class_id: next.id,
+        stream_id: matchStream ? matchStream.id : null,
+      }).eq('id', studentId);
+      if(e) error = e;
+    }
+  } else {
+    const { error: e } = await sb.from('students').update({ status: 'promoted' }).in('id', checked);
+    error = e;
+  }
+  if(error){ alert(error.message); return; }
+  alert('Done.');
+  showTab('promote');
 }
 
 /* ============================================================
