@@ -195,8 +195,8 @@
 <!-- ============ LOGIN ============ -->
 <div id="loginScreen">
   <div class="login-card">
-    <h1>🏫 School Admin</h1>
-    <p class="sub">Baby Class – P7 · Marks & Reports</p>
+    <h1>🏫 <span id="brandName">School Admin</span></h1>
+    <p class="sub" id="brandMotto">Baby Class – P7 · Marks & Reports</p>
 
     <div class="tabs-auth">
       <button id="tabSignin" class="active" onclick="setAuthMode('signin')">Sign in</button>
@@ -214,6 +214,7 @@
 
     <button class="primary" id="authSubmitBtn" onclick="handleAuthSubmit()">Sign in</button>
     <div class="login-error" id="authError"></div>
+    <div style="text-align:center;margin-top:10px;"><a href="#" onclick="handleForgotPassword();return false;" style="font-size:12.5px;color:var(--rule-blue);">Forgot password?</a></div>
     <div class="login-note" id="authNote">Admins: sign in with the account created in Supabase. Teachers: use "Teacher sign up" to create your own login — the admin will then assign your class and subject.</div>
   </div>
 </div>
@@ -233,6 +234,8 @@
       <button class="navbtn" data-tab="teachers" onclick="showTab('teachers')">Teachers</button>
       <button class="navbtn" data-tab="attendance" onclick="showTab('attendance')">Attendance</button>
       <button class="navbtn" data-tab="reports" onclick="showTab('reports')">Reports</button>
+      <button class="navbtn" data-tab="admins" onclick="showTab('admins')">Admins</button>
+      <button class="navbtn" data-tab="settings" onclick="showTab('settings')">School Settings</button>
       <button class="signout" onclick="signOut()">Sign out</button>
     </div>
     <div class="main" id="mainContent"></div>
@@ -283,6 +286,28 @@ function divisionFor(aggregate){
 let CURRENT_USER = null;
 let CURRENT_PROFILE = null;
 let CACHE = { classes:[], streams:[], subjects:[], terms:[], students:[], teachers:[], assignments:[] };
+let SCHOOL_SETTINGS = {};
+
+async function handleForgotPassword(){
+  const email = document.getElementById('authEmail').value.trim();
+  if(!email){ alert('Type your email in the Email field first, then click "Forgot password?"'); return; }
+  const redirectTo = location.href.replace(/admin\.html.*$/, 'reset-password.html');
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if(error){ alert(error.message); return; }
+  alert('If that email has an account, a password reset link has been sent. Check your inbox.');
+}
+
+async function loadBranding(){
+  const { data } = await sb.from('school_settings').select('*').eq('id',1).maybeSingle();
+  if(data){
+    if(data.school_name){
+      document.getElementById('brandName').textContent = data.school_name;
+      document.title = data.school_name + ' — Admin';
+    }
+    if(data.motto) document.getElementById('brandMotto').textContent = data.motto;
+  }
+}
+loadBranding();
 
 /* ============================================================
    AUTH
@@ -376,7 +401,7 @@ async function signOut(){
    DATA LOADING
    ============================================================ */
 async function loadAllData(){
-  const [c,s,sub,t,st,tc,as] = await Promise.all([
+  const [c,s,sub,t,st,tc,as,settings] = await Promise.all([
     sb.from('classes').select('*').order('sort_order'),
     sb.from('streams').select('*'),
     sb.from('subjects').select('*').order('name'),
@@ -384,6 +409,7 @@ async function loadAllData(){
     sb.from('students').select('*').order('full_name'),
     sb.from('profiles').select('*').eq('role','teacher').order('full_name'),
     sb.from('teacher_assignments').select('*'),
+    sb.from('school_settings').select('*').eq('id',1).maybeSingle(),
   ]);
   CACHE.classes = c.data||[];
   CACHE.streams = s.data||[];
@@ -392,6 +418,7 @@ async function loadAllData(){
   CACHE.students = st.data||[];
   CACHE.teachers = tc.data||[];
   CACHE.assignments = as.data||[];
+  SCHOOL_SETTINGS = settings.data || {};
 }
 function className(id){ return CACHE.classes.find(c=>c.id===id)?.name || '—'; }
 function streamName(id){ return CACHE.streams.find(s=>s.id===id)?.name || ''; }
@@ -412,6 +439,8 @@ const RENDERERS = {
   teachers: renderTeachers,
   attendance: renderAttendance,
   reports: renderReports,
+  admins: renderAdmins,
+  settings: renderSettings,
 };
 async function showTab(tab){
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
@@ -653,7 +682,7 @@ function renderStudents(){
   main.innerHTML = `
     <div class="topline">
       <div><h2>Students</h2><p>${CACHE.students.filter(s=>s.status==='active').length} active students</p></div>
-      <button class="btn btn-add" onclick="openStudentModal()">+ Add student</button>
+      <div><button class="btn btn-ghost" onclick="exportStudentsCSV()">⬇️ Export CSV</button> <button class="btn btn-add" onclick="openStudentModal()">+ Add student</button></div>
     </div>
     <div class="filters">
       <select id="classFilter" onchange="studentFilterClass=this.value; renderStudents();">
@@ -739,6 +768,14 @@ function refreshStreamOptions(classId){
   const sel = document.getElementById('f_stream');
   const streams = CACHE.streams.filter(s=>s.class_id===classId);
   sel.innerHTML = '<option value="">—</option>' + streams.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+}
+function exportStudentsCSV(){
+  const header = ['Full Name','Admission No','Gender','DOB','Class','Stream','Guardian Name','Guardian Contact','Status'];
+  const rows = [header];
+  CACHE.students.forEach(s=>{
+    rows.push([s.full_name, s.admission_no||'', s.gender||'', s.dob||'', className(s.class_id), streamName(s.stream_id), s.guardian_name||'', s.guardian_contact||'', s.status]);
+  });
+  downloadCSV('students.csv', rows);
 }
 async function saveStudent(id){
   const full_name = document.getElementById('f_name').value.trim();
@@ -1048,9 +1085,11 @@ async function loadClassMarks(){
   const subjectsUsed = CACHE.subjects;
 
   area.innerHTML = `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;gap:10px;">
+      <button class="btn btn-ghost" onclick="exportClassMarksCSV()">⬇️ Export CSV</button>
       <button class="btn btn-ghost" onclick="printAllReports()">🖨️ Print all report cards for this class</button>
     </div>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:-4px 0 10px;">As admin you can edit any score directly below — click a box, type, then click elsewhere to save.</p>
     <div class="card">
       <table>
         <thead><tr><th>Student</th>${subjectsUsed.map(s=>`<th class="num">${s.code||s.name}</th>`).join('')}<th class="num">Avg</th><th></th></tr></thead>
@@ -1064,7 +1103,7 @@ async function loadClassMarks(){
           const avg = valid.length ? (valid.reduce((a,b)=>a+parseFloat(b),0)/valid.length).toFixed(1) : '—';
           return `<tr>
             <td><b>${st.full_name}</b></td>
-            ${rowMarks.map(v=>`<td class="num">${v!==null?v:'—'}</td>`).join('')}
+            ${subjectsUsed.map((sub,i)=>`<td><input type="number" min="0" max="100" class="score-input" style="width:56px;padding:5px;text-align:center;" value="${rowMarks[i]!==null?rowMarks[i]:''}" onchange="adminSaveMark('${st.id}','${sub.id}',this.value)"></td>`).join('')}
             <td class="num"><b>${avg}</b></td>
             <td><button class="btn-small" onclick="openReportCard('${st.id}')">Report card</button></td>
           </tr>`;
@@ -1074,6 +1113,41 @@ async function loadClassMarks(){
     </div>
     <div id="reportCardArea"></div>
   `;
+}
+async function adminSaveMark(studentId, subjectId, value){
+  const val = value.trim();
+  if(val===''){ return; }
+  const score = parseFloat(val);
+  if(isNaN(score)||score<0||score>100){ alert('Score must be between 0 and 100.'); return; }
+  const { error } = await sb.from('marks').upsert({
+    student_id: studentId, subject_id: subjectId, term_id: reportTerm, score, entered_by: CURRENT_USER.id
+  }, { onConflict:'student_id,subject_id,term_id' });
+  if(error){ alert('Could not save: ' + error.message); }
+}
+function downloadCSV(filename, rows){
+  const csv = rows.map(r => r.map(cell => `"${String(cell??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+async function exportClassMarksCSV(){
+  const studentsInClass = CACHE.students.filter(s=>s.class_id===reportClass && s.status==='active');
+  const { data: marks } = await sb.from('marks').select('*').eq('term_id', reportTerm);
+  const term = CACHE.terms.find(t=>t.id===reportTerm);
+  const header = ['Student', ...CACHE.subjects.map(s=>s.name), 'Average'];
+  const rows = [header];
+  studentsInClass.forEach(st=>{
+    const scores = CACHE.subjects.map(sub=>{
+      const m = (marks||[]).find(mk=>mk.student_id===st.id && mk.subject_id===sub.id);
+      return m ? m.score : '';
+    });
+    const valid = scores.filter(v=>v!=='');
+    const avg = valid.length ? (valid.reduce((a,b)=>a+parseFloat(b),0)/valid.length).toFixed(1) : '';
+    rows.push([st.full_name, ...scores, avg]);
+  });
+  downloadCSV(`${className(reportClass)}_${term?term.name+'_'+term.year:'marks'}.csv`, rows);
 }
 function buildReportCardHTML(student, marks, commentRow, term){
   const rows = (marks||[]).map(m=>{
@@ -1096,6 +1170,9 @@ function buildReportCardHTML(student, marks, commentRow, term){
 
   return `
     <div class="report-card report-card-print">
+      ${SCHOOL_SETTINGS.logo_url?`<img src="${SCHOOL_SETTINGS.logo_url}" style="max-height:50px;display:block;margin-bottom:8px;">`:''}
+      ${SCHOOL_SETTINGS.school_name?`<div style="font-family:'Zilla Slab',Georgia,serif;font-size:20px;color:var(--chalk-green);font-weight:700;">${SCHOOL_SETTINGS.school_name}</div>`:''}
+      ${SCHOOL_SETTINGS.motto?`<div style="font-size:12px;color:var(--ink-soft);font-style:italic;margin-bottom:10px;">${SCHOOL_SETTINGS.motto}</div>`:''}
       ${student.photo_url?`<img src="${student.photo_url}" class="student-photo-lg">`:''}
       <h3>${student.full_name}</h3>
       <div class="meta">${className(student.class_id)}${student.stream_id?' '+streamName(student.stream_id):''} · ${term?term.name+' '+term.year:''}${student.admission_no?' · Adm# '+student.admission_no:''}</div>
@@ -1176,6 +1253,97 @@ async function saveComments(studentId){
   }
   if(error){ document.getElementById('f_err').textContent = error.message; return; }
   closeModal(); openReportCard(studentId);
+}
+
+/* ============================================================
+   ADMINS (handover / access management)
+   ============================================================ */
+async function renderAdmins(){
+  const main = document.getElementById('mainContent');
+  main.innerHTML = '<div class="loading">Loading…</div>';
+  const { data: admins } = await sb.from('profiles').select('*').eq('role','admin').order('full_name');
+
+  main.innerHTML = `
+    <div class="topline"><div><h2>Admins</h2><p>Manage who has full admin access — useful for handing the system over to someone else</p></div></div>
+
+    <div class="banner">
+      <b>To hand this system to a new owner:</b> have them open the login page and use
+      "Teacher sign up" to create their own login (no Supabase access needed). Then come back
+      here and promote them to admin below.
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <table><thead><tr><th>Name</th><th></th></tr></thead>
+      <tbody>
+      ${(admins||[]).map(a=>`<tr>
+        <td><b>${a.full_name}</b>${a.id===CURRENT_USER.id?' <span style="color:var(--ink-soft);font-size:12px;">(you)</span>':''}</td>
+        <td>${a.id!==CURRENT_USER.id ? `<button class="btn-small danger" onclick="demoteAdmin('${a.id}')">Remove admin access</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="2" class="empty">No admins found</td></tr>'}
+      </tbody></table>
+    </div>
+
+    <div class="topline"><div><h3 style="margin:0;font-size:17px;color:var(--chalk-green);">Promote a teacher to admin</h3></div></div>
+    <div class="card">
+      <table><thead><tr><th>Name</th><th></th></tr></thead>
+      <tbody>
+      ${CACHE.teachers.map(t=>`<tr>
+        <td>${t.full_name}</td>
+        <td><button class="btn-small" onclick="promoteToAdmin('${t.id}')">Make admin</button></td>
+      </tr>`).join('') || '<tr><td colspan="2" class="empty">No teachers have signed up yet — they need to sign up first, then you can promote them here.</td></tr>'}
+      </tbody></table>
+    </div>
+  `;
+}
+async function promoteToAdmin(profileId){
+  if(!confirm('Give this person full admin access? They will be able to see and change everything in the system.')) return;
+  const { error } = await sb.from('profiles').update({role:'admin'}).eq('id', profileId);
+  if(error){ alert(error.message); return; }
+  showTab('admins');
+}
+async function demoteAdmin(profileId){
+  if(!confirm('Remove admin access from this person? They will become a regular teacher (their class/subject assignments, if any, stay as-is).')) return;
+  const { error } = await sb.from('profiles').update({role:'teacher'}).eq('id', profileId);
+  if(error){ alert(error.message); return; }
+  showTab('admins');
+}
+
+/* ============================================================
+   SCHOOL SETTINGS
+   ============================================================ */
+async function renderSettings(){
+  const main = document.getElementById('mainContent');
+  main.innerHTML = '<div class="loading">Loading…</div>';
+  const { data: s } = await sb.from('school_settings').select('*').eq('id',1).maybeSingle();
+  main.innerHTML = `
+    <div class="topline"><div><h2>School Settings</h2><p>Shown on the login screen and printed report cards</p></div></div>
+    <div class="card card-pad" style="max-width:480px;">
+      <label>School name</label>
+      <input id="s_name" value="${s?.school_name||''}">
+      <label>Motto (optional)</label>
+      <input id="s_motto" value="${s?.motto||''}">
+      <label>Address (optional)</label>
+      <input id="s_address" value="${s?.address||''}">
+      <label>Phone (optional)</label>
+      <input id="s_phone" value="${s?.phone||''}">
+      <label>Logo URL (optional)</label>
+      <input id="s_logo" value="${s?.logo_url||''}" placeholder="https://...">
+      <div class="field-error" id="s_err"></div>
+      <button class="btn btn-add" style="margin-top:16px;" onclick="saveSettings()">Save</button>
+    </div>
+  `;
+}
+async function saveSettings(){
+  const payload = {
+    id: 1,
+    school_name: document.getElementById('s_name').value.trim() || 'My School',
+    motto: document.getElementById('s_motto').value.trim() || null,
+    address: document.getElementById('s_address').value.trim() || null,
+    phone: document.getElementById('s_phone').value.trim() || null,
+    logo_url: document.getElementById('s_logo').value.trim() || null,
+  };
+  const { error } = await sb.from('school_settings').upsert(payload, { onConflict:'id' });
+  if(error){ document.getElementById('s_err').textContent = error.message; return; }
+  alert('Saved.');
 }
 
 /* ============================================================
