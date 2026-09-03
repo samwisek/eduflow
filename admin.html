@@ -720,8 +720,15 @@ function renderStudents(){
   main.innerHTML = `
     <div class="topline">
       <div><h2>Students</h2><p>${CACHE.students.filter(s=>s.status==='active').length} active students</p></div>
-      <div><button class="btn btn-ghost" onclick="exportStudentsCSV()">⬇️ Export CSV</button> <button class="btn btn-add" onclick="openStudentModal()">+ Add student</button></div>
+      <div>
+        <button class="btn btn-ghost" onclick="downloadImportTemplate()">📄 Import template</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('csvImportInput').click()">⬆️ Import CSV</button>
+        <input type="file" id="csvImportInput" accept=".csv" style="display:none;" onchange="handleStudentCSVImport(this)">
+        <button class="btn btn-ghost" onclick="exportStudentsCSV()">⬇️ Export CSV</button>
+        <button class="btn btn-add" onclick="openStudentModal()">+ Add student</button>
+      </div>
     </div>
+    <div id="importStatus"></div>
     <div class="filters">
       <select id="classFilter" onchange="studentFilterClass=this.value; renderStudents();">
         <option value="">All classes</option>
@@ -815,6 +822,108 @@ function exportStudentsCSV(){
   });
   downloadCSV('students.csv', rows);
 }
+function downloadImportTemplate(){
+  downloadCSV('student_import_template.csv', [
+    ['Full Name','Admission No','Gender','DOB','Class','Stream','Guardian Name','Guardian Contact','Status'],
+    ['Okello Peter','2026-014','M','2016-03-12','P1','A','Okello James','0772000000','active'],
+  ]);
+}
+/* Minimal CSV line parser — handles quoted fields containing commas */
+function parseCSV(text){
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i=0; i<text.length; i++){
+    const c = text[i], next = text[i+1];
+    if(inQuotes){
+      if(c === '"' && next === '"'){ field += '"'; i++; }
+      else if(c === '"'){ inQuotes = false; }
+      else { field += c; }
+    } else {
+      if(c === '"'){ inQuotes = true; }
+      else if(c === ','){ row.push(field); field=''; }
+      else if(c === '\n' || c === '\r'){
+        if(c === '\r' && next === '\n') i++;
+        row.push(field); field='';
+        if(row.length>1 || row[0]!=='') rows.push(row);
+        row = [];
+      } else { field += c; }
+    }
+  }
+  if(field!=='' || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+async function handleStudentCSVImport(input){
+  const file = input.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('importStatus');
+  statusEl.innerHTML = '<div class="banner">Reading file…</div>';
+  const text = await file.text();
+  const rows = parseCSV(text);
+  if(rows.length < 2){ statusEl.innerHTML = '<div class="banner">CSV looks empty.</div>'; input.value=''; return; }
+
+  const header = rows[0].map(h=>h.trim().toLowerCase());
+  const idx = {
+    name: header.indexOf('full name'),
+    adm: header.indexOf('admission no'),
+    gender: header.indexOf('gender'),
+    dob: header.indexOf('dob'),
+    cls: header.indexOf('class'),
+    stream: header.indexOf('stream'),
+    guardian: header.indexOf('guardian name'),
+    contact: header.indexOf('guardian contact'),
+    status: header.indexOf('status'),
+  };
+  if(idx.name===-1 || idx.cls===-1){
+    statusEl.innerHTML = '<div class="banner">CSV must have at least "Full Name" and "Class" columns. Use the Import template button to get the right format.</div>';
+    input.value=''; return;
+  }
+
+  const toInsert = [];
+  const errors = [];
+  for(let r=1; r<rows.length; r++){
+    const row = rows[r];
+    if(!row || row.every(c=>c.trim()==='')) continue;
+    const name = (row[idx.name]||'').trim();
+    const clsName = (row[idx.cls]||'').trim();
+    if(!name){ errors.push(`Row ${r+1}: missing name, skipped.`); continue; }
+    const cls = CACHE.classes.find(c=>c.name.toLowerCase()===clsName.toLowerCase());
+    if(!cls){ errors.push(`Row ${r+1} (${name}): class "${clsName}" not found, skipped.`); continue; }
+    let stream_id = null;
+    const streamName_ = idx.stream>-1 ? (row[idx.stream]||'').trim() : '';
+    if(streamName_){
+      const strm = CACHE.streams.find(s=>s.class_id===cls.id && s.name.toLowerCase()===streamName_.toLowerCase());
+      if(strm) stream_id = strm.id;
+      else errors.push(`Row ${r+1} (${name}): stream "${streamName_}" not found in ${cls.name}, left blank.`);
+    }
+    const genderRaw = idx.gender>-1 ? (row[idx.gender]||'').trim().toUpperCase() : '';
+    toInsert.push({
+      full_name: name,
+      admission_no: idx.adm>-1 ? ((row[idx.adm]||'').trim()||null) : null,
+      gender: (genderRaw==='M'||genderRaw==='F') ? genderRaw : null,
+      dob: idx.dob>-1 ? ((row[idx.dob]||'').trim()||null) : null,
+      class_id: cls.id,
+      stream_id,
+      guardian_name: idx.guardian>-1 ? ((row[idx.guardian]||'').trim()||null) : null,
+      guardian_contact: idx.contact>-1 ? ((row[idx.contact]||'').trim()||null) : null,
+      status: (idx.status>-1 && ['active','promoted','left'].includes((row[idx.status]||'').trim().toLowerCase())) ? (row[idx.status]||'').trim().toLowerCase() : 'active',
+    });
+  }
+
+  if(toInsert.length===0){
+    statusEl.innerHTML = `<div class="banner">Nothing to import.<br>${errors.join('<br>')}</div>`;
+    input.value=''; return;
+  }
+
+  statusEl.innerHTML = `<div class="banner">Importing ${toInsert.length} students…</div>`;
+  const { error } = await sb.from('students').insert(toInsert);
+  input.value = '';
+  if(error){
+    statusEl.innerHTML = `<div class="banner" style="border-color:#e8c3bd;color:var(--pen-red);">Import failed: ${error.message}</div>`;
+    return;
+  }
+  statusEl.innerHTML = `<div class="banner">✅ Imported ${toInsert.length} students.${errors.length ? '<br><br>Notes:<br>'+errors.join('<br>') : ''}</div>`;
+  showTab('students');
+}
 async function saveStudent(id){
   const full_name = document.getElementById('f_name').value.trim();
   if(!full_name){ document.getElementById('f_err').textContent='Name is required.'; return; }
@@ -876,13 +985,15 @@ function renderTeachers(){
         </tr>
         ${assigns.map(a=>`<tr><td colspan="4" class="wrap-cell" style="padding:4px 14px 4px 30px;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--ink-soft);">
           ↳ ${className(a.class_id)}${a.stream_id?' ('+streamName(a.stream_id)+')':' (whole class)'} — ${subjectName(a.subject_id)}
-          <button class="btn-small" style="margin-left:10px;" onclick="openReplaceModal('${a.id}')">Replace teacher</button>
+          ${a.is_class_teacher ? '<span class="pill active" style="margin-left:8px;">Class teacher</span>' : `<button class="btn-small" style="margin-left:10px;" onclick="makeClassTeacher('${a.id}','${a.class_id}','${a.stream_id||''}')">Make class teacher</button>`}
+          <button class="btn-small" style="margin-left:6px;" onclick="openReplaceModal('${a.id}')">Replace teacher</button>
           <button class="btn-small danger" onclick="deleteRow('teacher_assignments','${a.id}','assignment')">Remove</button>
         </td></tr>`).join('')}
         `;
       }).join('') || '<tr><td colspan="4" class="empty">No teachers have signed up yet</td></tr>'}
       </tbody></table>
     </div>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin-top:10px;">"Class teacher" is whoever is allowed to write the report-card comment for that class — only one per class.</p>
   `;
 }
 function openAssignModal(teacherId){
@@ -926,6 +1037,17 @@ async function saveAssignment(teacherId){
 async function deleteTeacher(teacherId){
   if(!confirm(`Delete ${teacherName(teacherId)}? This removes them from the system and all their class/subject assignments. It does NOT delete their login — do that separately in Supabase Authentication → Users if needed.`)) return;
   const { error } = await sb.from('profiles').delete().eq('id', teacherId);
+  if(error){ alert(error.message); return; }
+  showTab('teachers');
+}
+async function makeClassTeacher(assignmentId, classId, streamId){
+  if(!confirm('Make this teacher the class teacher? Only they will be able to write the report-card comment for this class — any current class teacher for it will be replaced.')) return;
+  // unset any existing class teacher for this class/stream, then set the new one
+  let unsetQuery = sb.from('teacher_assignments').update({is_class_teacher:false}).eq('class_id', classId);
+  unsetQuery = streamId ? unsetQuery.eq('stream_id', streamId) : unsetQuery.is('stream_id', null);
+  const { error: unsetErr } = await unsetQuery;
+  if(unsetErr){ alert(unsetErr.message); return; }
+  const { error } = await sb.from('teacher_assignments').update({is_class_teacher:true}).eq('id', assignmentId);
   if(error){ alert(error.message); return; }
   showTab('teachers');
 }
