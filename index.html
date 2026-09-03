@@ -443,10 +443,20 @@ async function saveScore(studentId, subjectId){
 /* ============================================================
    COMMENTS
    ============================================================ */
+function isClassTeacherForClass(classId, streamId){
+  return ASSIGNMENTS.some(a => a.class_id===classId && (a.stream_id||null)===(streamId||null) && a.is_class_teacher);
+}
 async function loadComments(){
   const asg = ASSIGNMENTS.find(a=>a.id===selectedAssignment);
   const area = document.getElementById('commentsArea');
   if(!asg || !selectedTerm){ area.innerHTML=''; return; }
+
+  const iAmClassTeacher = isClassTeacherForClass(asg.class_id, asg.stream_id);
+  if(!iAmClassTeacher){
+    area.innerHTML = `<div class="banner" style="margin:0;">Only the designated class teacher for ${className(asg.class_id)}${asg.stream_id?' '+streamName(asg.stream_id):''} can write the report comment. Ask your admin if this should be you.</div>`;
+    return;
+  }
+
   area.innerHTML = '<div class="loading">Loading comments…</div>';
 
   let studentsQuery = sb.from('students').select('*').eq('class_id', asg.class_id).eq('status','active');
