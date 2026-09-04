@@ -349,6 +349,10 @@ async function saveRollCall(classId, streamId){
 /* ============================================================
    MARKS GRID
    ============================================================ */
+function classLevelFor(classId){
+  const c = CLASSES.find(x=>x.id===classId);
+  return c?.level || null;
+}
 async function loadGrid(){
   const asg = ASSIGNMENTS.find(a=>a.id===selectedAssignment);
   const gridArea = document.getElementById('gridArea');
@@ -366,25 +370,58 @@ async function loadGrid(){
     return;
   }
 
+  const level = classLevelFor(asg.class_id);
+  const isPrimary = level === 'lower_primary' || level === 'upper_primary';
+
+  if(!isPrimary){
+    // Nursery (or level not set yet) — single "Marks Obtained" column, same as before.
+    gridArea.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;gap:10px;align-items:center;">
+        <span class="save-status" id="bulkStatus" style="font-size:12.5px;">All saved ✓</span>
+        <button class="save-comment-btn" onclick="saveAllScores('${asg.subject_id}')">💾 Save all</button>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>Student</th><th style="width:110px;">Marks Obtained (0–100)</th></tr></thead>
+          <tbody>
+          ${students.map(st=>{
+            const m = (marks||[]).find(mk=>mk.student_id===st.id && mk.assessment_type==='eot');
+            return `<tr>
+              <td>${st.full_name}</td>
+              <td>
+                <input type="number" min="0" max="100" class="score-input" id="score_eot_${st.id}"
+                  value="${m?m.score:''}" placeholder="—"
+                  onchange="saveScore('${st.id}','${asg.subject_id}','eot')">
+                <span class="save-status" id="status_eot_${st.id}">Saved ✓</span>
+              </td>
+            </tr>`;
+          }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    return;
+  }
+
+  // Lower/Upper Primary — three columns: Topical, Mid Term, End of Term.
   gridArea.innerHTML = `
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:-6px 0 10px;">Enter whichever assessments have happened so far — you don't need all three at once.</p>
     <div style="display:flex;justify-content:flex-end;margin-bottom:10px;gap:10px;align-items:center;">
       <span class="save-status" id="bulkStatus" style="font-size:12.5px;">All saved ✓</span>
       <button class="save-comment-btn" onclick="saveAllScores('${asg.subject_id}')">💾 Save all</button>
     </div>
     <div class="card">
       <table>
-        <thead><tr><th>Student</th><th style="width:110px;">Score (0–100)</th></tr></thead>
+        <thead><tr><th>Student</th><th style="width:90px;">Topical</th><th style="width:90px;">Mid Term</th><th style="width:90px;">EOT</th></tr></thead>
         <tbody>
         ${students.map(st=>{
-          const m = (marks||[]).find(mk=>mk.student_id===st.id);
+          const findM = (type) => (marks||[]).find(mk=>mk.student_id===st.id && mk.assessment_type===type);
+          const t = findM('topical'), mid = findM('midterm'), eot = findM('eot');
           return `<tr>
             <td>${st.full_name}</td>
-            <td>
-              <input type="number" min="0" max="100" class="score-input" id="score_${st.id}"
-                value="${m?m.score:''}" placeholder="—"
-                onchange="saveScore('${st.id}','${asg.subject_id}')">
-              <span class="save-status" id="status_${st.id}">Saved ✓</span>
-            </td>
+            <td><input type="number" min="0" max="100" class="score-input" id="score_topical_${st.id}" value="${t?t.score:''}" placeholder="—" onchange="saveScore('${st.id}','${asg.subject_id}','topical')"></td>
+            <td><input type="number" min="0" max="100" class="score-input" id="score_midterm_${st.id}" value="${mid?mid.score:''}" placeholder="—" onchange="saveScore('${st.id}','${asg.subject_id}','midterm')"></td>
+            <td><input type="number" min="0" max="100" class="score-input" id="score_eot_${st.id}" value="${eot?eot.score:''}" placeholder="—" onchange="saveScore('${st.id}','${asg.subject_id}','eot')"></td>
           </tr>`;
         }).join('')}
         </tbody>
@@ -401,14 +438,17 @@ async function saveAllScores(subjectId){
     if(val===''){ continue; }
     const score = parseFloat(val);
     if(isNaN(score) || score<0 || score>100){
-      alert(`Score for one student is invalid (${val}). Fix it before saving all.`);
+      alert(`One of the scores is invalid (${val}). Fix it before saving all.`);
       return;
     }
-    const studentId = input.id.replace('score_','');
-    rows.push({ student_id: studentId, subject_id: subjectId, term_id: selectedTerm, score, entered_by: CURRENT_USER.id });
+    // id pattern: score_<type>_<studentId>
+    const m = input.id.match(/^score_(topical|midterm|eot)_(.+)$/);
+    if(!m) continue;
+    const [, assessment_type, studentId] = m;
+    rows.push({ student_id: studentId, subject_id: subjectId, term_id: selectedTerm, assessment_type, score, entered_by: CURRENT_USER.id });
   }
   if(rows.length===0){ alert('No scores entered yet.'); return; }
-  const { error } = await sb.from('marks').upsert(rows, { onConflict: 'student_id,subject_id,term_id' });
+  const { error } = await sb.from('marks').upsert(rows, { onConflict: 'student_id,subject_id,term_id,assessment_type' });
   const statusEl = document.getElementById('bulkStatus');
   if(error){ alert('Could not save: ' + error.message); return; }
   inputs.forEach(i=>i.classList.add('saved'));
@@ -416,9 +456,9 @@ async function saveAllScores(subjectId){
   setTimeout(()=>statusEl.classList.remove('show'), 2000);
 }
 
-async function saveScore(studentId, subjectId){
-  const input = document.getElementById(`score_${studentId}`);
-  const statusEl = document.getElementById(`status_${studentId}`);
+async function saveScore(studentId, subjectId, assessmentType){
+  const input = document.getElementById(`score_${assessmentType}_${studentId}`);
+  const statusEl = document.getElementById(`status_${assessmentType}_${studentId}`);
   const val = input.value.trim();
   if(val==='') return;
   const score = parseFloat(val);
@@ -430,14 +470,17 @@ async function saveScore(studentId, subjectId){
     student_id: studentId,
     subject_id: subjectId,
     term_id: selectedTerm,
+    assessment_type: assessmentType,
     score: score,
     entered_by: CURRENT_USER.id,
-  }, { onConflict: 'student_id,subject_id,term_id' });
+  }, { onConflict: 'student_id,subject_id,term_id,assessment_type' });
 
   if(error){ alert('Could not save: ' + error.message); return; }
   input.classList.add('saved');
-  statusEl.classList.add('show');
-  setTimeout(()=>statusEl.classList.remove('show'), 1500);
+  if(statusEl){
+    statusEl.classList.add('show');
+    setTimeout(()=>statusEl.classList.remove('show'), 1500);
+  }
 }
 
 /* ============================================================
@@ -466,26 +509,46 @@ async function loadComments(){
 
   if(!students || students.length===0){ area.innerHTML = '<div class="empty">No students to comment on.</div>'; return; }
 
+  const level = classLevelFor(asg.class_id);
+  const isNursery = level === 'nursery';
+  const gradeSelect = (id, current) => `<select id="${id}" style="width:80px;display:inline-block;margin-right:8px;"><option value="">—</option>${['A','B','C','D'].map(g=>`<option value="${g}" ${current===g?'selected':''}>${g}</option>`).join('')}</select>`;
+
   area.innerHTML = students.map(st=>{
     const c = (comments||[]).find(cm=>cm.student_id===st.id);
+    const activityBlock = isNursery ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);">
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">Behaviour ${gradeSelect('beh_g_'+st.id, c?.behaviour_grade)}<input placeholder="comment" id="beh_c_${st.id}" value="${c?.behaviour_comment||''}" style="display:inline-block;width:auto;flex:1;"></div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">Physical Ed. ${gradeSelect('pe_g_'+st.id, c?.pe_grade)}<input placeholder="comment" id="pe_c_${st.id}" value="${c?.pe_comment||''}" style="display:inline-block;width:auto;flex:1;"></div>
+        <div style="font-size:12px;color:var(--ink-soft);">Cleanliness ${gradeSelect('cl_g_'+st.id, c?.cleanliness_grade)}<input placeholder="comment" id="cl_c_${st.id}" value="${c?.cleanliness_comment||''}" style="display:inline-block;width:auto;flex:1;"></div>
+      </div>
+    ` : '';
     return `<div class="comment-row">
       <div class="sname">${st.full_name}</div>
       <textarea class="comment-box" id="comment_${st.id}" placeholder="e.g. Works hard, needs to be more confident in class discussions...">${c?.class_teacher_comment||''}</textarea>
-      <button class="save-comment-btn" onclick="saveComment('${st.id}')">Save comment</button>
+      ${activityBlock}
+      <button class="save-comment-btn" onclick="saveComment('${st.id}', ${isNursery})">Save comment</button>
       <span class="save-status" id="cstatus_${st.id}" style="margin-left:8px;">Saved ✓</span>
     </div>`;
   }).join('');
 }
 
-async function saveComment(studentId){
-  const text = document.getElementById(`comment_${studentId}`).value.trim();
+async function saveComment(studentId, includeActivities){
+  const payload = { class_teacher_comment: document.getElementById(`comment_${studentId}`).value.trim() };
+  if(includeActivities){
+    payload.behaviour_grade = document.getElementById(`beh_g_${studentId}`).value || null;
+    payload.behaviour_comment = document.getElementById(`beh_c_${studentId}`).value.trim() || null;
+    payload.pe_grade = document.getElementById(`pe_g_${studentId}`).value || null;
+    payload.pe_comment = document.getElementById(`pe_c_${studentId}`).value.trim() || null;
+    payload.cleanliness_grade = document.getElementById(`cl_g_${studentId}`).value || null;
+    payload.cleanliness_comment = document.getElementById(`cl_c_${studentId}`).value.trim() || null;
+  }
   const statusEl = document.getElementById(`cstatus_${studentId}`);
   const { data: existing } = await sb.from('report_comments').select('id').eq('student_id',studentId).eq('term_id',selectedTerm).maybeSingle();
   let error;
   if(existing){
-    ({error} = await sb.from('report_comments').update({class_teacher_comment:text}).eq('id',existing.id));
+    ({error} = await sb.from('report_comments').update(payload).eq('id',existing.id));
   } else {
-    ({error} = await sb.from('report_comments').insert({student_id:studentId, term_id:selectedTerm, class_teacher_comment:text}));
+    ({error} = await sb.from('report_comments').insert({student_id:studentId, term_id:selectedTerm, ...payload}));
   }
   if(error){ alert('Could not save comment: ' + error.message); return; }
   statusEl.classList.add('show');
