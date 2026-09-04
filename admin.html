@@ -169,15 +169,29 @@
   .subject-checks label{display:flex;align-items:center;gap:8px;font-weight:500;margin:0;color:var(--ink);font-size:14px;}
   .subject-checks input{width:auto;}
   @media print{
-    .report-card-print{page-break-after:always;}
+    .report-card-print{page-break-after:always; page-break-inside:avoid;}
+    @page{ size:A4; margin:10mm; }
   }
 
-  .report-card{background:#fff;border:1px solid var(--border);border-radius:6px;padding:24px;max-width:560px;margin-top:16px;}
+  .report-card{background:#fff;border:2px solid var(--chalk-green);padding:14px 18px;max-width:720px;margin:16px auto;font-size:12.5px;}
+  .report-card table{border-collapse:collapse;font-size:11px;width:100%;}
+  .report-card th, .report-card td{padding:3px 6px;border:1px solid var(--ink);white-space:normal;background:none;text-transform:none;letter-spacing:normal;font-size:11px;color:var(--ink);}
+  .report-card thead th{background:#f0efe6;font-weight:700;}
+  .report-card tfoot td{background:#f7f6ee;}
   .report-card h3{color:var(--chalk-green);margin:0 0 2px;}
   .report-card .meta{font-size:13px;color:var(--ink-soft);margin-bottom:14px;}
-  .report-card table{margin-top:10px;}
-  .report-card .comments{margin-top:16px;font-size:13.5px;line-height:1.6;}
+  .report-card table{margin-top:0;}
+  .report-card .comments{margin-top:10px;font-size:12px;line-height:1.5;}
   .report-card .comments b{color:var(--chalk-green);}
+  .rc-box{border:1px solid var(--ink);margin-top:8px;}
+  .rc-box-title{background:#f0efe6;font-weight:700;text-align:center;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--ink);letter-spacing:.03em;}
+  .rc-box table{width:100%;}
+  .rc-box table th, .rc-box table td{border:1px solid var(--ink) !important;padding:4px 6px;font-size:11px;}
+  .rc-field-row{display:flex;flex-wrap:wrap;border:1px solid var(--ink);}
+  .rc-field{flex:1 1 33%;border-right:1px solid var(--ink);padding:5px 8px;font-size:11.5px;min-width:0;}
+  .rc-field:last-child{border-right:none;}
+  .rc-field b{display:block;font-size:9.5px;text-transform:uppercase;color:var(--ink-soft);letter-spacing:.03em;margin-bottom:1px;}
+  .rc-signoff{border:1px solid var(--ink);padding:6px 10px;margin-top:8px;font-size:11.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;}
 
   @media(max-width:820px){
     .shell{flex-direction:column;}
@@ -1387,10 +1401,16 @@ function studentIdentityBlockHTML(student, term){
   const first = student.first_name || splitName(student.full_name).first;
   const last = student.last_name || splitName(student.full_name).last;
   return `
-    <table style="width:100%;margin-bottom:10px;">
-      <tr><td style="border:none;padding:2px 4px;white-space:normal;"><b>First Name:</b> ${first}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Last Name:</b> ${last}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Class:</b> ${className(student.class_id)}${student.stream_id?' '+streamName(student.stream_id):''}</td></tr>
-      <tr><td style="border:none;padding:2px 4px;white-space:normal;"><b>LIN:</b> ${student.lin||'—'}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Pay Code:</b> ${student.student_pay_code||'—'}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Academic Year:</b> ${term?term.year:'—'}</td></tr>
-    </table>
+    <div class="rc-field-row">
+      <div class="rc-field"><b>First Name</b>${first||'—'}</div>
+      <div class="rc-field"><b>Last Name</b>${last||'—'}</div>
+      <div class="rc-field"><b>Class</b>${className(student.class_id)}${student.stream_id?' '+streamName(student.stream_id):''}</div>
+    </div>
+    <div class="rc-field-row" style="border-top:none;">
+      <div class="rc-field"><b>LIN</b>${student.lin||'—'}</div>
+      <div class="rc-field"><b>Pay Code</b>${student.student_pay_code||'—'}</div>
+      <div class="rc-field"><b>Academic Year</b>${term?term.year:'—'}</div>
+    </div>
   `;
 }
 function nextTermLine(term){
@@ -1417,9 +1437,9 @@ function buildPrimaryReportHTML(student, marksAll, commentRow, term, posInfo, sh
   const division = divisionFor(totalAgg);
 
   const hasTopicalOrMid = topicalMarks.length>0 || midtermMarks.length>0;
-  let topicalMidHTML = '', topicalTM=0, midTM=0;
+  let subjHeaders='', topRow={html:'',tm:0,ta:0}, midRow={html:'',tm:0,ta:0}, topicalTM=0, midTM=0;
   if(hasTopicalOrMid){
-    const subjHeaders = orderedSubjects.map(s=>`<th class="num">${s.code||s.name}</th><th class="num">Agg</th>`).join('');
+    subjHeaders = orderedSubjects.map(s=>`<th class="num">${s.code||s.name}</th><th class="num">Agg</th>`).join('');
     function assessRow(label, list){
       let tm=0, ta=0;
       const cells = orderedSubjects.map(sub=>{
@@ -1431,16 +1451,9 @@ function buildPrimaryReportHTML(student, marksAll, commentRow, term, posInfo, sh
       }).join('');
       return { html: `<tr><td>${label}</td>${cells}<td class="num">${tm}</td><td class="num">${ta}</td><td>${divisionFor(ta)}</td></tr>`, tm, ta };
     }
-    const topRow = assessRow('TOPICAL TESTS', topicalMarks);
-    const midRow = assessRow('MID TERM', midtermMarks);
+    topRow = assessRow('TOPICAL TESTS', topicalMarks);
+    midRow = assessRow('MID TERM', midtermMarks);
     topicalTM = topRow.tm; midTM = midRow.tm;
-    topicalMidHTML = `
-      <div style="font-weight:700;text-align:center;margin:14px 0 8px;font-size:13px;">TOPICAL AND MID TERM EXAM</div>
-      <table>
-        <thead><tr><th>Subject</th>${subjHeaders}<th class="num">TM</th><th class="num">TA</th><th>DIV</th></tr></thead>
-        <tbody>${topRow.html}${midRow.html}</tbody>
-      </table>
-    `;
   }
   const totalAvgMark = hasTopicalOrMid
     ? (((totalEOT + topicalTM + midTM) / 3).toFixed(1))
@@ -1457,27 +1470,48 @@ function buildPrimaryReportHTML(student, marksAll, commentRow, term, posInfo, sh
 
   return `
     <div class="report-card report-card-print">
-      ${student.photo_url?`<img src="${student.photo_url}" class="student-photo-lg">`:''}
-      ${schoolHeaderHTML()}
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div style="flex:1;">${schoolHeaderHTML()}</div>
+        ${student.photo_url?`<img src="${student.photo_url}" class="student-photo-lg">`:''}
+      </div>
       ${reportTitleHTML(term)}
       ${studentIdentityBlockHTML(student, term)}
-      <div style="font-weight:700;text-align:center;margin:6px 0 8px;font-size:13px;">EOT TERM RESULTS</div>
-      <table>
-        <thead><tr><th>Subject</th><th class="num">Full Mark</th><th class="num">EOT</th><th class="num">Agg</th><th>Remark</th><th class="num">Init.</th></tr></thead>
-        <tbody>${eotRows}</tbody>
-        <tfoot><tr style="font-weight:700;"><td>Total</td><td class="num">${totalFullMarks}</td><td class="num">${totalEOT}</td><td class="num">${totalAgg}</td><td></td><td></td></tr></tfoot>
-      </table>
-      <div style="margin-top:8px;font-size:14px;"><b>Division: ${division}</b></div>
-      ${topicalMidHTML}
-      <div style="margin-top:10px;font-size:14px;"><b>Total Average Mark: ${totalAvgMark}</b></div>
-      ${positionBlock}
-      <div class="comments" style="margin-top:14px;">
-        <div><b>Class Teacher's Name:</b> ${classTeacher||'—'}</div>
-        <div style="margin-top:4px;"><b>Teacher's Comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
-        <div style="margin-top:10px;"><b>Head Teacher's Name:</b> ${SCHOOL_SETTINGS.head_teacher_name||'—'}</div>
-        <div style="margin-top:4px;"><b>Head Teacher's Comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+
+      <div class="rc-box">
+        <div class="rc-box-title">EOT TERM RESULTS</div>
+        <table>
+          <thead><tr><th>Subject</th><th class="num">Full Mark</th><th class="num">EOT</th><th class="num">Agg</th><th>Remark</th><th class="num">Init.</th></tr></thead>
+          <tbody>${eotRows}</tbody>
+          <tfoot><tr style="font-weight:700;"><td>Total</td><td class="num">${totalFullMarks}</td><td class="num">${totalEOT}</td><td class="num">${totalAgg}</td><td></td><td></td></tr></tfoot>
+        </table>
+        <div style="padding:5px 8px;font-size:11.5px;"><b>Division: ${division}</b></div>
       </div>
-      <div style="margin-top:14px;font-size:12px;display:flex;justify-content:space-between;">
+
+      ${hasTopicalOrMid ? `
+      <div class="rc-box">
+        <div class="rc-box-title">TOPICAL AND MID TERM EXAM</div>
+        <table>
+          <thead><tr><th>Subject</th>${subjHeaders}<th class="num">TM</th><th class="num">TA</th><th>DIV</th></tr></thead>
+          <tbody>${topRow.html}${midRow.html}</tbody>
+        </table>
+      </div>` : ''}
+
+      <div class="rc-field-row" style="margin-top:8px;">
+        <div class="rc-field" style="flex:1 1 60%;"><b>Total Average Mark</b>${totalAvgMark}</div>
+        <div class="rc-field"><b>Position</b>${posInfo ? `${ordinal(posInfo.position)} out of ${posInfo.total}` : '—'}</div>
+      </div>
+
+      <div class="rc-box">
+        <div class="rc-box-title">REMARKS</div>
+        <div class="comments" style="padding:6px 10px;margin-top:0;">
+          <div><b>Class Teacher's Name:</b> ${classTeacher||'—'}</div>
+          <div style="margin-top:3px;"><b>Teacher's Comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+          <div style="margin-top:6px;"><b>Head Teacher's Name:</b> ${SCHOOL_SETTINGS.head_teacher_name||'—'}</div>
+          <div style="margin-top:3px;"><b>Head Teacher's Comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+        </div>
+      </div>
+
+      <div class="rc-signoff">
         <div>${nextTermLine(term)}</div>
         <div>Head Teacher's Signature: ______________________</div>
       </div>
@@ -1505,42 +1539,52 @@ function buildNurseryReportHTML(student, marksAll, commentRow, term, posInfo){
   const classTeacher = classTeacherNameFor(student.class_id);
 
   return `
-    <div class="report-card report-card-print">
+    <div class="report-card report-card-print" style="border-color:#c77dae;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
         <div style="flex:1;">${schoolHeaderHTML()}</div>
         ${student.photo_url?`<img src="${student.photo_url}" class="student-photo-lg">`:''}
       </div>
       ${reportTitleHTML(term)}
       ${studentIdentityBlockHTML(student, term)}
-      <div style="text-align:center;font-size:20px;margin:6px 0 10px;letter-spacing:6px;">🖍️ 📚 ✏️ ⭐ 🧸</div>
-      <table>
-        <thead><tr><th>Learning Area</th><th class="num">Full Marks</th><th class="num">Marks Obtained</th><th>Comment</th><th class="num">Init.</th></tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot><tr style="font-weight:700;"><td>Total</td><td class="num">${totalFull}</td><td class="num">${totalObtained}</td><td></td><td></td></tr></tfoot>
-      </table>
-      <div style="margin-top:8px;font-size:14px;"><b>Division: ${overall.label}</b></div>
+      <div style="text-align:center;font-size:15px;margin:5px 0;letter-spacing:8px;">🖍️ 📚 ⭐ 🧸</div>
 
-      <div style="font-weight:700;text-align:center;margin:14px 0 8px;font-size:13px;">ACTIVITIES</div>
-      <table>
-        <thead><tr><th>Activity</th><th class="num">Grade</th><th>Teacher's Comment</th></tr></thead>
-        <tbody>
-          ${activityRow('Behaviour', commentRow?.behaviour_grade, commentRow?.behaviour_comment)}
-          ${activityRow('Physical Education', commentRow?.pe_grade, commentRow?.pe_comment)}
-          ${activityRow('Cleanliness', commentRow?.cleanliness_grade, commentRow?.cleanliness_comment)}
-        </tbody>
-      </table>
-
-      <div class="comments" style="margin-top:14px;">
-        <div><b>Class Teacher's Name:</b> ${classTeacher||'—'}</div>
-        <div style="margin-top:4px;"><b>Teacher's Comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
-        <div style="margin-top:10px;"><b>Head of Nursery Section's Name:</b> ${SCHOOL_SETTINGS.head_teacher_name||'—'}</div>
-        <div style="margin-top:4px;"><b>Head of Nursery's Comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+      <div class="rc-box" style="border-color:#c77dae;">
+        <div class="rc-box-title" style="background:#fbeef5;">LEARNING AREAS</div>
+        <table>
+          <thead><tr><th>Learning Area</th><th class="num">Full Marks</th><th class="num">Marks Obtained</th><th>Comment</th><th class="num">Init.</th></tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr style="font-weight:700;"><td>Total</td><td class="num">${totalFull}</td><td class="num">${totalObtained}</td><td></td><td></td></tr></tfoot>
+        </table>
+        <div style="padding:5px 8px;font-size:11.5px;"><b>Division: ${overall.label}</b></div>
       </div>
-      <div style="margin-top:14px;font-size:12px;display:flex;justify-content:space-between;">
+
+      <div class="rc-box" style="border-color:#c77dae;">
+        <div class="rc-box-title" style="background:#fbeef5;">ACTIVITIES</div>
+        <table>
+          <thead><tr><th>Activity</th><th class="num">Grade</th><th>Teacher's Comment</th></tr></thead>
+          <tbody>
+            ${activityRow('Behaviour', commentRow?.behaviour_grade, commentRow?.behaviour_comment)}
+            ${activityRow('Physical Education', commentRow?.pe_grade, commentRow?.pe_comment)}
+            ${activityRow('Cleanliness', commentRow?.cleanliness_grade, commentRow?.cleanliness_comment)}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="rc-box" style="border-color:#c77dae;">
+        <div class="rc-box-title" style="background:#fbeef5;">REMARKS</div>
+        <div class="comments" style="padding:6px 10px;margin-top:0;">
+          <div><b>Class Teacher's Name:</b> ${classTeacher||'—'}</div>
+          <div style="margin-top:3px;"><b>Teacher's Comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+          <div style="margin-top:6px;"><b>Head of Nursery Section's Name:</b> ${SCHOOL_SETTINGS.head_teacher_name||'—'}</div>
+          <div style="margin-top:3px;"><b>Head of Nursery's Comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+        </div>
+      </div>
+
+      <div class="rc-signoff" style="border-color:#c77dae;">
         <div>${nextTermLine(term)}</div>
         <div>Sign: ______________________</div>
       </div>
-      <div style="text-align:center;font-size:18px;margin-top:10px;letter-spacing:6px;">🎨 🧩 🎈 📏 🖌️</div>
+      <div style="text-align:center;font-size:14px;margin-top:6px;letter-spacing:8px;">🎨 🧩 🎈</div>
     </div>
   `;
 }
