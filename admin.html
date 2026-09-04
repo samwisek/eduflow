@@ -270,32 +270,41 @@ const SUPABASE_URL = "https://efqstsysxpdkkxiarumf.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmcXN0c3lzeHBka2t4aWFydW1mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MjMyNzcsImV4cCI6MjEwMzM5OTI3N30.J0DrMc3zdbBXkOyoTw3je-GSPnW-ClEYZM16l27Y47k";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-/* Uganda PLE-style grading: 1 (best) to 9 (fail) per subject */
-const GRADE_BANDS = [
-  {min:85,max:100,grade:'D1',point:1,comment:'Excellent'},
-  {min:70,max:84,grade:'D2',point:2,comment:'Very Good'},
-  {min:60,max:69,grade:'C3',point:3,comment:'Good'},
-  {min:50,max:59,grade:'C4',point:4,comment:'Fairly Good'},
-  {min:45,max:49,grade:'C5',point:5,comment:'Adequate'},
-  {min:40,max:44,grade:'C6',point:6,comment:'Basic'},
-  {min:35,max:39,grade:'P7',point:7,comment:'Pass'},
-  {min:30,max:34,grade:'P8',point:8,comment:'Pass'},
-  {min:0,max:29,grade:'F9',point:9,comment:'Fail'},
-];
+/* Grading now comes from admin-configurable tables (CACHE.gradeBands,
+   CACHE.divisionBands, CACHE.nurseryBands) loaded in loadAllData(). */
 function gradeFor(score){
   if(score===null||score===undefined||score==='') return {grade:'-',point:null,comment:''};
   const s = parseFloat(score);
-  for(const b of GRADE_BANDS){ if(s>=b.min && s<=b.max) return b; }
+  for(const b of CACHE.gradeBands){ if(s>=b.min_score && s<=b.max_score) return {grade:b.label, point:b.point, comment:b.comment||''}; }
   return {grade:'-',point:null,comment:''};
 }
-const CORE_SUBJECTS = ['english','mathematics','integrated science','social studies'];
 function divisionFor(aggregate){
-  if(aggregate>=4 && aggregate<=12) return 'Division One';
-  if(aggregate>=13 && aggregate<=23) return 'Division Two';
-  if(aggregate>=24 && aggregate<=29) return 'Division Three';
-  if(aggregate>=30 && aggregate<=34) return 'Division Four';
-  if(aggregate>=35) return 'Ungraded';
+  for(const b of CACHE.divisionBands){ if(aggregate>=b.min_aggregate && aggregate<=b.max_aggregate) return b.label; }
   return '—';
+}
+function nurseryGradeFor(pct){
+  if(pct===null||pct===undefined||isNaN(pct)) return {label:'-',comment:''};
+  for(const b of CACHE.nurseryBands){ if(pct>=b.min_pct && pct<=b.max_pct) return {label:b.label, comment:b.comment||''}; }
+  return {label:'-',comment:''};
+}
+function toRoman(n){
+  const map = [[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
+  n = parseInt(n); if(isNaN(n)||n<=0) return '';
+  let out=''; for(const [val,sym] of map){ while(n>=val){ out+=sym; n-=val; } } return out;
+}
+function splitName(fullName){
+  const parts = (fullName||'').trim().split(/\s+/);
+  return { first: parts[0]||'', last: parts.slice(1).join(' ')||'' };
+}
+function personInitials(profileId){
+  const t = CACHE.teachers.find(x=>x.id===profileId);
+  const name = t ? t.full_name : (profileId===CURRENT_USER?.id ? CURRENT_PROFILE?.full_name : null);
+  if(!name) return '—';
+  return name.trim().split(/\s+/).map(w=>w[0]).join('.').toUpperCase()+'.';
+}
+function classTeacherNameFor(classId){
+  const a = CACHE.assignments.find(x=>x.class_id===classId && x.is_class_teacher);
+  return a ? teacherName(a.teacher_id) : '';
 }
 
 let CURRENT_USER = null;
@@ -1269,7 +1278,7 @@ async function loadClassMarks(){
   const area = document.getElementById('reportArea');
   area.innerHTML = '<div class="loading">Loading marks…</div>';
   const studentsInClass = CACHE.students.filter(s=>s.class_id===reportClass && s.status==='active');
-  const { data: marks } = await sb.from('marks').select('*').eq('term_id', reportTerm);
+  const { data: marks } = await sb.from('marks').select('*').eq('term_id', reportTerm).eq('assessment_type','eot');
   const subjectsUsed = CACHE.subjects;
 
   area.innerHTML = `
@@ -1277,7 +1286,7 @@ async function loadClassMarks(){
       <button class="btn btn-ghost" onclick="exportClassMarksCSV()">⬇️ Export CSV</button>
       <button class="btn btn-ghost" onclick="printAllReports()">🖨️ Print all report cards for this class</button>
     </div>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:-4px 0 10px;">As admin you can edit any score directly below — click a box, type, then click elsewhere to save.</p>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:-4px 0 10px;">This grid shows End-of-Term marks only — as admin you can edit any score directly below. Topical/Mid-Term marks are entered by teachers and only show on the full report card.</p>
     <div class="card">
       <table>
         <thead><tr><th>Student</th>${subjectsUsed.map(s=>`<th class="num">${s.code||s.name}</th>`).join('')}<th class="num">Avg</th><th></th></tr></thead>
@@ -1308,8 +1317,8 @@ async function adminSaveMark(studentId, subjectId, value){
   const score = parseFloat(val);
   if(isNaN(score)||score<0||score>100){ alert('Score must be between 0 and 100.'); return; }
   const { error } = await sb.from('marks').upsert({
-    student_id: studentId, subject_id: subjectId, term_id: reportTerm, score, entered_by: CURRENT_USER.id
-  }, { onConflict:'student_id,subject_id,term_id' });
+    student_id: studentId, subject_id: subjectId, term_id: reportTerm, assessment_type: 'eot', score, entered_by: CURRENT_USER.id
+  }, { onConflict:'student_id,subject_id,term_id,assessment_type' });
   if(error){ alert('Could not save: ' + error.message); }
 }
 function downloadCSV(filename, rows){
@@ -1322,7 +1331,7 @@ function downloadCSV(filename, rows){
 }
 async function exportClassMarksCSV(){
   const studentsInClass = CACHE.students.filter(s=>s.class_id===reportClass && s.status==='active');
-  const { data: marks } = await sb.from('marks').select('*').eq('term_id', reportTerm);
+  const { data: marks } = await sb.from('marks').select('*').eq('term_id', reportTerm).eq('assessment_type','eot');
   const term = CACHE.terms.find(t=>t.id===reportTerm);
   const header = ['Student', ...CACHE.subjects.map(s=>s.name), 'Average'];
   const rows = [header];
@@ -1337,50 +1346,190 @@ async function exportClassMarksCSV(){
   });
   downloadCSV(`${className(reportClass)}_${term?term.name+'_'+term.year:'marks'}.csv`, rows);
 }
-function buildReportCardHTML(student, marks, commentRow, term, posInfo){
-  const rows = (marks||[]).map(m=>{
-    const g = gradeFor(parseFloat(m.score));
-    return `<tr><td>${subjectName(m.subject_id)}</td><td class="num">${m.score}</td><td class="num grade-${g.grade}">${g.grade}</td><td>${g.comment}</td></tr>`;
-  }).join('') || `<tr><td colspan="4" class="empty">No marks entered yet for this term</td></tr>`;
+function schoolHeaderHTML(){
+  return `
+    ${SCHOOL_SETTINGS.logo_url?`<img src="${SCHOOL_SETTINGS.logo_url}" style="max-height:60px;display:block;margin:0 auto 6px;">`:''}
+    <div style="text-align:center;">
+      <div style="font-family:'Zilla Slab',Georgia,serif;font-size:20px;color:var(--chalk-green);font-weight:700;">${SCHOOL_SETTINGS.school_name||''}</div>
+      ${SCHOOL_SETTINGS.address?`<div style="font-size:11px;color:var(--ink-soft);">${SCHOOL_SETTINGS.address}</div>`:''}
+      ${(SCHOOL_SETTINGS.phone||SCHOOL_SETTINGS.email)?`<div style="font-size:11px;color:var(--ink-soft);">${SCHOOL_SETTINGS.phone||''}${SCHOOL_SETTINGS.phone&&SCHOOL_SETTINGS.email?' · ':''}${SCHOOL_SETTINGS.email||''}</div>`:''}
+      ${SCHOOL_SETTINGS.motto?`<div style="font-size:11px;color:var(--ink-soft);font-style:italic;">"${SCHOOL_SETTINGS.motto}"</div>`:''}
+    </div>
+  `;
+}
+function reportTitleHTML(term){
+  const numMatch = term ? (term.name.match(/\d+/)||[])[0] : null;
+  const roman = numMatch ? toRoman(numMatch) : '';
+  const label = roman ? `END OF TERM ${roman} REPORT` : (term?`${term.name} REPORT`:'TERM REPORT');
+  return `<div style="text-align:center;font-weight:700;font-size:14px;margin:8px 0 12px;border-top:2px solid var(--chalk-green);border-bottom:2px solid var(--chalk-green);padding:6px 0;">${label}</div>`;
+}
+function studentIdentityBlockHTML(student, term){
+  const {first,last} = splitName(student.full_name);
+  return `
+    <table style="width:100%;margin-bottom:10px;">
+      <tr><td style="border:none;padding:2px 4px;white-space:normal;"><b>First Name:</b> ${first}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Last Name:</b> ${last}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Class:</b> ${className(student.class_id)}${student.stream_id?' '+streamName(student.stream_id):''}</td></tr>
+      <tr><td style="border:none;padding:2px 4px;white-space:normal;"><b>LIN:</b> ${student.lin||'—'}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Pay Code:</b> ${student.student_pay_code||'—'}</td><td style="border:none;padding:2px 4px;white-space:normal;"><b>Academic Year:</b> ${term?term.year:'—'}</td></tr>
+    </table>
+  `;
+}
+function nextTermLine(term){
+  return term?.next_term_begins ? `Next term begins on ${new Date(term.next_term_begins+'T00:00:00').toLocaleDateString()}` : '';
+}
 
-  const coreMarks = (marks||[]).filter(m => {
-    const n = (subjectName(m.subject_id)||'').toLowerCase();
-    return CORE_SUBJECTS.some(keyword => n.includes(keyword));
-  });
-  let aggregateBlock = '';
-  if(coreMarks.length === CORE_SUBJECTS.length){
-    const aggregate = coreMarks.reduce((sum,m)=> sum + (gradeFor(parseFloat(m.score)).point||0), 0);
-    aggregateBlock = `<div style="margin-top:6px;font-size:14px;"><b>Aggregate: ${aggregate}</b> — <b>${divisionFor(aggregate)}</b></div>`;
+/* ---------- Lower Primary (P1-P3) & Upper Primary (P4-P7) ---------- */
+function buildPrimaryReportHTML(student, marksAll, commentRow, term, posInfo, showGradingKey){
+  const orderedSubjects = CACHE.subjects.filter(s=>marksAll.some(m=>m.subject_id===s.id));
+  const eotMarks = marksAll.filter(m=>m.assessment_type==='eot');
+  const topicalMarks = marksAll.filter(m=>m.assessment_type==='topical');
+  const midtermMarks = marksAll.filter(m=>m.assessment_type==='midterm');
+  const markFor = (list, subjectId) => list.find(m=>m.subject_id===subjectId);
+
+  let totalFullMarks=0, totalEOT=0, totalAgg=0;
+  const eotRows = orderedSubjects.map(sub=>{
+    const m = markFor(eotMarks, sub.id);
+    const score = m ? parseFloat(m.score) : null;
+    const g = gradeFor(score);
+    totalFullMarks += 100;
+    if(score!==null){ totalEOT += score; totalAgg += (g.point||0); }
+    return `<tr><td>${sub.name}</td><td class="num">100</td><td class="num">${score!==null?score:'—'}</td><td class="num grade-${g.grade}">${g.point!==null?g.point:'—'}</td><td>${g.comment||''}</td><td class="num">${m?personInitials(m.entered_by):'—'}</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">No marks entered yet</td></tr>`;
+  const division = divisionFor(totalAgg);
+
+  const hasTopicalOrMid = topicalMarks.length>0 || midtermMarks.length>0;
+  let topicalMidHTML = '', topicalTM=0, midTM=0;
+  if(hasTopicalOrMid){
+    const subjHeaders = orderedSubjects.map(s=>`<th class="num">${s.code||s.name}</th><th class="num">Agg</th>`).join('');
+    function assessRow(label, list){
+      let tm=0, ta=0;
+      const cells = orderedSubjects.map(sub=>{
+        const m = markFor(list, sub.id);
+        const score = m? parseFloat(m.score) : null;
+        const g = gradeFor(score);
+        if(score!==null){ tm+=score; ta+=(g.point||0); }
+        return `<td class="num">${score!==null?score:'—'}</td><td class="num">${g.point!==null?g.point:'—'}</td>`;
+      }).join('');
+      return { html: `<tr><td>${label}</td>${cells}<td class="num">${tm}</td><td class="num">${ta}</td><td>${divisionFor(ta)}</td></tr>`, tm, ta };
+    }
+    const topRow = assessRow('TOPICAL TESTS', topicalMarks);
+    const midRow = assessRow('MID TERM', midtermMarks);
+    topicalTM = topRow.tm; midTM = midRow.tm;
+    topicalMidHTML = `
+      <div style="font-weight:700;text-align:center;margin:14px 0 8px;font-size:13px;">TOPICAL AND MID TERM EXAM</div>
+      <table>
+        <thead><tr><th>Subject</th>${subjHeaders}<th class="num">TM</th><th class="num">TA</th><th>DIV</th></tr></thead>
+        <tbody>${topRow.html}${midRow.html}</tbody>
+      </table>
+    `;
   }
+  const totalAvgMark = hasTopicalOrMid
+    ? (((totalEOT + topicalTM + midTM) / 3).toFixed(1))
+    : (orderedSubjects.length ? (totalEOT/orderedSubjects.length).toFixed(1) : '—');
 
-  const validScores = (marks||[]).map(m=>parseFloat(m.score));
-  const avg = validScores.length ? (validScores.reduce((a,b)=>a+b,0)/validScores.length).toFixed(1) : '—';
-
-  const positionBlock = posInfo
-    ? `<div style="margin-top:6px;font-size:14px;"><b>Position: ${ordinal(posInfo.position)} out of ${posInfo.total}</b></div>`
-    : `<div style="margin-top:6px;font-size:12.5px;color:var(--ink-soft);">Position not available (no marks entered yet)</div>`;
+  const positionBlock = posInfo ? `<div style="margin-top:4px;font-size:12.5px;"><b>Position: ${ordinal(posInfo.position)} out of ${posInfo.total}</b></div>` : '';
+  const gradingKeyHTML = showGradingKey ? `
+    <table style="margin-top:14px;">
+      <thead><tr>${CACHE.gradeBands.map(b=>`<th class="num">${b.min_score}-${b.max_score}</th>`).join('')}</tr></thead>
+      <tbody><tr>${CACHE.gradeBands.map(b=>`<td class="num"><b>${b.label}</b></td>`).join('')}</tr></tbody>
+    </table>
+  ` : '';
+  const classTeacher = classTeacherNameFor(student.class_id);
 
   return `
     <div class="report-card report-card-print">
-      ${SCHOOL_SETTINGS.logo_url?`<img src="${SCHOOL_SETTINGS.logo_url}" style="max-height:50px;display:block;margin-bottom:8px;">`:''}
-      ${SCHOOL_SETTINGS.school_name?`<div style="font-family:'Zilla Slab',Georgia,serif;font-size:20px;color:var(--chalk-green);font-weight:700;">${SCHOOL_SETTINGS.school_name}</div>`:''}
-      ${SCHOOL_SETTINGS.motto?`<div style="font-size:12px;color:var(--ink-soft);font-style:italic;margin-bottom:10px;">${SCHOOL_SETTINGS.motto}</div>`:''}
       ${student.photo_url?`<img src="${student.photo_url}" class="student-photo-lg">`:''}
-      <h3>${student.full_name}</h3>
-      <div class="meta">${className(student.class_id)}${student.stream_id?' '+streamName(student.stream_id):''} · ${term?term.name+' '+term.year:''}${student.admission_no?' · Adm# '+student.admission_no:''}</div>
+      ${schoolHeaderHTML()}
+      ${reportTitleHTML(term)}
+      ${studentIdentityBlockHTML(student, term)}
+      <div style="font-weight:700;text-align:center;margin:6px 0 8px;font-size:13px;">EOT TERM RESULTS</div>
       <table>
-        <thead><tr><th>Subject</th><th class="num">Score</th><th class="num">Grade</th><th>Remark</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr><th>Subject</th><th class="num">Full Mark</th><th class="num">EOT</th><th class="num">Agg</th><th>Remark</th><th class="num">Init.</th></tr></thead>
+        <tbody>${eotRows}</tbody>
+        <tfoot><tr style="font-weight:700;"><td>Total</td><td class="num">${totalFullMarks}</td><td class="num">${totalEOT}</td><td class="num">${totalAgg}</td><td></td><td></td></tr></tfoot>
       </table>
-      <div style="margin-top:10px;font-size:14px;">Average: ${avg}%</div>
+      <div style="margin-top:8px;font-size:14px;"><b>Division: ${division}</b></div>
+      ${topicalMidHTML}
+      <div style="margin-top:10px;font-size:14px;"><b>Total Average Mark: ${totalAvgMark}</b></div>
       ${positionBlock}
-      ${aggregateBlock}
-      <div class="comments">
-        <div><b>Class teacher's comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
-        <div style="margin-top:6px;"><b>Head teacher's comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+      <div class="comments" style="margin-top:14px;">
+        <div><b>Class Teacher's Name:</b> ${classTeacher||'—'}</div>
+        <div style="margin-top:4px;"><b>Teacher's Comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+        <div style="margin-top:10px;"><b>Head Teacher's Name:</b> ${SCHOOL_SETTINGS.head_teacher_name||'—'}</div>
+        <div style="margin-top:4px;"><b>Head Teacher's Comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
       </div>
+      <div style="margin-top:14px;font-size:12px;display:flex;justify-content:space-between;">
+        <div>${nextTermLine(term)}</div>
+        <div>Head Teacher's Signature: ______________________</div>
+      </div>
+      ${gradingKeyHTML}
     </div>
   `;
+}
+
+/* ---------- Nursery (Baby / Middle / Top) ---------- */
+function buildNurseryReportHTML(student, marksAll, commentRow, term, posInfo){
+  const orderedSubjects = CACHE.subjects.filter(s=>marksAll.some(m=>m.subject_id===s.id));
+  let totalFull=0, totalObtained=0;
+  const rows = orderedSubjects.map(sub=>{
+    const m = marksAll.find(x=>x.subject_id===sub.id);
+    const score = m? parseFloat(m.score) : null;
+    totalFull += 100;
+    if(score!==null) totalObtained += score;
+    const ng = nurseryGradeFor(score);
+    return `<tr><td>${sub.name}</td><td class="num">100</td><td class="num">${score!==null?score:'—'}</td><td>${ng.comment||'—'}</td><td class="num">${m?personInitials(m.entered_by):'—'}</td></tr>`;
+  }).join('') || `<tr><td colspan="5" class="empty">No marks entered yet</td></tr>`;
+
+  const pct = totalFull ? (totalObtained/totalFull*100) : null;
+  const overall = nurseryGradeFor(pct);
+  const activityRow = (label, grade, comment) => `<tr><td>${label}</td><td class="num">${grade||'—'}</td><td>${comment||'<span style="color:var(--ink-soft);">Not yet added</span>'}</td></tr>`;
+  const classTeacher = classTeacherNameFor(student.class_id);
+
+  return `
+    <div class="report-card report-card-print">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div style="flex:1;">${schoolHeaderHTML()}</div>
+        ${student.photo_url?`<img src="${student.photo_url}" class="student-photo-lg">`:''}
+      </div>
+      ${reportTitleHTML(term)}
+      ${studentIdentityBlockHTML(student, term)}
+      <div style="text-align:center;font-size:20px;margin:6px 0 10px;letter-spacing:6px;">🖍️ 📚 ✏️ ⭐ 🧸</div>
+      <table>
+        <thead><tr><th>Learning Area</th><th class="num">Full Marks</th><th class="num">Marks Obtained</th><th>Comment</th><th class="num">Init.</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr style="font-weight:700;"><td>Total</td><td class="num">${totalFull}</td><td class="num">${totalObtained}</td><td></td><td></td></tr></tfoot>
+      </table>
+      <div style="margin-top:8px;font-size:14px;"><b>Division: ${overall.label}</b></div>
+
+      <div style="font-weight:700;text-align:center;margin:14px 0 8px;font-size:13px;">ACTIVITIES</div>
+      <table>
+        <thead><tr><th>Activity</th><th class="num">Grade</th><th>Teacher's Comment</th></tr></thead>
+        <tbody>
+          ${activityRow('Behaviour', commentRow?.behaviour_grade, commentRow?.behaviour_comment)}
+          ${activityRow('Physical Education', commentRow?.pe_grade, commentRow?.pe_comment)}
+          ${activityRow('Cleanliness', commentRow?.cleanliness_grade, commentRow?.cleanliness_comment)}
+        </tbody>
+      </table>
+
+      <div class="comments" style="margin-top:14px;">
+        <div><b>Class Teacher's Name:</b> ${classTeacher||'—'}</div>
+        <div style="margin-top:4px;"><b>Teacher's Comment:</b> ${commentRow?.class_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+        <div style="margin-top:10px;"><b>Head of Nursery Section's Name:</b> ${SCHOOL_SETTINGS.head_teacher_name||'—'}</div>
+        <div style="margin-top:4px;"><b>Head of Nursery's Comment:</b> ${commentRow?.head_teacher_comment || '<span style="color:var(--ink-soft);">Not yet added</span>'}</div>
+      </div>
+      <div style="margin-top:14px;font-size:12px;display:flex;justify-content:space-between;">
+        <div>${nextTermLine(term)}</div>
+        <div>Sign: ______________________</div>
+      </div>
+      <div style="text-align:center;font-size:18px;margin-top:10px;letter-spacing:6px;">🎨 🧩 🎈 📏 🖌️</div>
+    </div>
+  `;
+}
+
+/* Picks the right template based on the student's class's report level */
+function buildReportCardHTML(student, marksAll, commentRow, term, posInfo){
+  const cls = CACHE.classes.find(c=>c.id===student.class_id);
+  const level = cls?.level;
+  if(level === 'nursery') return buildNurseryReportHTML(student, marksAll||[], commentRow, term, posInfo);
+  return buildPrimaryReportHTML(student, marksAll||[], commentRow, term, posInfo, level==='upper_primary');
 }
 
 function ordinal(n){
@@ -1389,13 +1538,13 @@ function ordinal(n){
   return n + (s[(v-20)%10] || s[v] || s[0]);
 }
 
-/* Ranks every active student in a class by their average score for a term.
+/* Ranks every active student in a class by their EOT average for a term.
    Ties share the same position (1,2,2,4 style). Students with no marks
    entered yet are excluded from ranking. */
 async function computeClassPositions(classId, termId){
   const studentsInClass = CACHE.students.filter(s=>s.class_id===classId && s.status==='active');
   if(studentsInClass.length===0) return {};
-  const { data: marks } = await sb.from('marks').select('*').eq('term_id', termId).in('student_id', studentsInClass.map(s=>s.id));
+  const { data: marks } = await sb.from('marks').select('*').eq('term_id', termId).eq('assessment_type','eot').in('student_id', studentsInClass.map(s=>s.id));
   const stats = studentsInClass.map(st=>{
     const own = (marks||[]).filter(m=>m.student_id===st.id).map(m=>parseFloat(m.score));
     const avg = own.length ? own.reduce((a,b)=>a+b,0)/own.length : null;
@@ -1449,13 +1598,32 @@ async function printAllReports(){
   window.print();
 }
 function openCommentsModal(studentId){
+  const student = CACHE.students.find(s=>s.id===studentId);
+  const cls = CACHE.classes.find(c=>c.id===student?.class_id);
+  const isNursery = cls?.level === 'nursery';
   sb.from('report_comments').select('*').eq('student_id',studentId).eq('term_id',reportTerm).maybeSingle().then(({data:row})=>{
+    const activityFields = isNursery ? `
+      <div class="section-title" style="margin:16px 0 8px;">Activities (Nursery)</div>
+      <label>Behaviour — grade</label>
+      <select id="f_beh_g"><option value="">—</option>${['A','B','C','D'].map(g=>`<option ${row?.behaviour_grade===g?'selected':''}>${g}</option>`).join('')}</select>
+      <label>Behaviour — comment</label>
+      <input id="f_beh_c" value="${row?.behaviour_comment||''}">
+      <label>Physical Education — grade</label>
+      <select id="f_pe_g"><option value="">—</option>${['A','B','C','D'].map(g=>`<option ${row?.pe_grade===g?'selected':''}>${g}</option>`).join('')}</select>
+      <label>Physical Education — comment</label>
+      <input id="f_pe_c" value="${row?.pe_comment||''}">
+      <label>Cleanliness — grade</label>
+      <select id="f_cl_g"><option value="">—</option>${['A','B','C','D'].map(g=>`<option ${row?.cleanliness_grade===g?'selected':''}>${g}</option>`).join('')}</select>
+      <label>Cleanliness — comment</label>
+      <input id="f_cl_c" value="${row?.cleanliness_comment||''}">
+    ` : '';
     openModal(`
       <h3>Report Comments</h3>
       <label>Class teacher's comment</label>
       <textarea id="f_ct" rows="3">${row?.class_teacher_comment||''}</textarea>
       <label>Head teacher's comment</label>
       <textarea id="f_ht" rows="3">${row?.head_teacher_comment||''}</textarea>
+      ${activityFields}
       <div class="field-error" id="f_err"></div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -1465,14 +1633,25 @@ function openCommentsModal(studentId){
   });
 }
 async function saveComments(studentId){
-  const class_teacher_comment = document.getElementById('f_ct').value.trim();
-  const head_teacher_comment = document.getElementById('f_ht').value.trim();
+  const payload = {
+    class_teacher_comment: document.getElementById('f_ct').value.trim(),
+    head_teacher_comment: document.getElementById('f_ht').value.trim(),
+  };
+  const behEl = document.getElementById('f_beh_g');
+  if(behEl){
+    payload.behaviour_grade = behEl.value || null;
+    payload.behaviour_comment = document.getElementById('f_beh_c').value.trim() || null;
+    payload.pe_grade = document.getElementById('f_pe_g').value || null;
+    payload.pe_comment = document.getElementById('f_pe_c').value.trim() || null;
+    payload.cleanliness_grade = document.getElementById('f_cl_g').value || null;
+    payload.cleanliness_comment = document.getElementById('f_cl_c').value.trim() || null;
+  }
   const { data: existing } = await sb.from('report_comments').select('id').eq('student_id',studentId).eq('term_id',reportTerm).maybeSingle();
   let error;
   if(existing){
-    ({error} = await sb.from('report_comments').update({class_teacher_comment, head_teacher_comment}).eq('id',existing.id));
+    ({error} = await sb.from('report_comments').update(payload).eq('id',existing.id));
   } else {
-    ({error} = await sb.from('report_comments').insert({student_id:studentId, term_id:reportTerm, class_teacher_comment, head_teacher_comment}));
+    ({error} = await sb.from('report_comments').insert({student_id:studentId, term_id:reportTerm, ...payload}));
   }
   if(error){ document.getElementById('f_err').textContent = error.message; return; }
   closeModal(); openReportCard(studentId);
