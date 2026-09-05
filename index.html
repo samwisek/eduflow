@@ -431,6 +431,7 @@ async function loadGrid(){
 }
 
 async function saveAllScores(subjectId){
+  const asg = ASSIGNMENTS.find(a=>a.id===selectedAssignment);
   const inputs = document.querySelectorAll('.score-input');
   const rows = [];
   for(const input of inputs){
@@ -445,7 +446,7 @@ async function saveAllScores(subjectId){
     const m = input.id.match(/^score_(topical|midterm|eot)_(.+)$/);
     if(!m) continue;
     const [, assessment_type, studentId] = m;
-    rows.push({ student_id: studentId, subject_id: subjectId, term_id: selectedTerm, assessment_type, score, entered_by: CURRENT_USER.id });
+    rows.push({ student_id: studentId, subject_id: subjectId, term_id: selectedTerm, assessment_type, score, entered_by: CURRENT_USER.id, class_id_at_entry: asg?.class_id||null, stream_id_at_entry: asg?.stream_id||null });
   }
   if(rows.length===0){ alert('No scores entered yet.'); return; }
   const { error } = await sb.from('marks').upsert(rows, { onConflict: 'student_id,subject_id,term_id,assessment_type' });
@@ -457,6 +458,7 @@ async function saveAllScores(subjectId){
 }
 
 async function saveScore(studentId, subjectId, assessmentType){
+  const asg = ASSIGNMENTS.find(a=>a.id===selectedAssignment);
   const input = document.getElementById(`score_${assessmentType}_${studentId}`);
   const statusEl = document.getElementById(`status_${assessmentType}_${studentId}`);
   const val = input.value.trim();
@@ -473,6 +475,8 @@ async function saveScore(studentId, subjectId, assessmentType){
     assessment_type: assessmentType,
     score: score,
     entered_by: CURRENT_USER.id,
+    class_id_at_entry: asg?.class_id||null,
+    stream_id_at_entry: asg?.stream_id||null,
   }, { onConflict: 'student_id,subject_id,term_id,assessment_type' });
 
   if(error){ alert('Could not save: ' + error.message); return; }
