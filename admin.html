@@ -168,12 +168,13 @@
   .subject-checks{display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:8px;margin-top:4px;}
   .subject-checks label{display:flex;align-items:center;gap:8px;font-weight:500;margin:0;color:var(--ink);font-size:14px;}
   .subject-checks input{width:auto;}
+  @page{ size:A4; margin:10mm; }
   @media print{
     .report-card-print{page-break-after:always; page-break-inside:avoid;}
-    @page{ size:A4; margin:10mm; }
   }
 
   .report-card{background:#fff;border:2px solid var(--chalk-green);padding:14px 18px;max-width:720px;margin:16px auto;font-size:12.5px;}
+  #printableReport{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   .report-card table{border-collapse:collapse;font-size:11px;width:100%;}
   .report-card th, .report-card td{padding:3px 6px;border:1px solid var(--ink);white-space:normal;background:none;text-transform:none;letter-spacing:normal;font-size:11px;color:var(--ink);}
   .report-card thead th{background:#f0efe6;font-weight:700;}
@@ -311,8 +312,8 @@ function splitName(fullName){
   return { first: parts[0]||'', last: parts.slice(1).join(' ')||'' };
 }
 function personInitials(profileId){
-  const t = CACHE.teachers.find(x=>x.id===profileId);
-  const name = t ? t.full_name : (profileId===CURRENT_USER?.id ? CURRENT_PROFILE?.full_name : null);
+  const p = CACHE.allProfiles.find(x=>x.id===profileId);
+  const name = p ? p.full_name : (profileId===CURRENT_USER?.id ? CURRENT_PROFILE?.full_name : null);
   if(!name) return '—';
   return name.trim().split(/\s+/).map(w=>w[0]).join('.').toUpperCase()+'.';
 }
@@ -323,7 +324,7 @@ function classTeacherNameFor(classId){
 
 let CURRENT_USER = null;
 let CURRENT_PROFILE = null;
-let CACHE = { classes:[], streams:[], subjects:[], terms:[], students:[], teachers:[], assignments:[], gradeBands:[], divisionBands:[], nurseryBands:[] };
+let CACHE = { classes:[], streams:[], subjects:[], terms:[], students:[], teachers:[], assignments:[], gradeBands:[], divisionBands:[], nurseryBands:[], allProfiles:[] };
 let SCHOOL_SETTINGS = {};
 
 async function handleForgotPassword(){
@@ -463,7 +464,7 @@ async function signOut(){
    DATA LOADING
    ============================================================ */
 async function loadAllData(){
-  const [c,s,sub,t,st,tc,as,settings,gb,db,nb] = await Promise.all([
+  const [c,s,sub,t,st,tc,as,settings,gb,db,nb,allP] = await Promise.all([
     sb.from('classes').select('*').order('sort_order'),
     sb.from('streams').select('*'),
     sb.from('subjects').select('*').order('name'),
@@ -475,6 +476,7 @@ async function loadAllData(){
     sb.from('grade_bands').select('*').order('sort_order'),
     sb.from('division_bands').select('*').order('sort_order'),
     sb.from('nursery_grade_bands').select('*').order('sort_order'),
+    sb.from('profiles').select('*'),
   ]);
   CACHE.classes = c.data||[];
   CACHE.streams = s.data||[];
@@ -486,6 +488,7 @@ async function loadAllData(){
   CACHE.gradeBands = gb.data||[];
   CACHE.divisionBands = db.data||[];
   CACHE.nurseryBands = nb.data||[];
+  CACHE.allProfiles = allP.data||[];
   SCHOOL_SETTINGS = settings.data || {};
 }
 function className(id){ return CACHE.classes.find(c=>c.id===id)?.name || '—'; }
