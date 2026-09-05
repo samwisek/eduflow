@@ -285,6 +285,36 @@ const SUPABASE_URL = "https://efqstsysxpdkkxiarumf.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmcXN0c3lzeHBka2t4aWFydW1mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MjMyNzcsImV4cCI6MjEwMzM5OTI3N30.J0DrMc3zdbBXkOyoTw3je-GSPnW-ClEYZM16l27Y47k";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+/* Shrinks an image client-side before upload — keeps photos looking
+   fine on screen/print while cutting file size drastically (phone
+   camera photos can be 3-8MB; this brings them down to ~50-150KB).
+   Saves both storage/bandwidth costs and load time on mobile data. */
+function compressImage(file, maxDim, quality){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = e => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      let { width, height } = img;
+      if(width > height){
+        if(width > maxDim){ height = Math.round(height * maxDim/width); width = maxDim; }
+      } else {
+        if(height > maxDim){ width = Math.round(width * maxDim/height); height = maxDim; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => {
+        if(!blob){ reject(new Error('Could not process image')); return; }
+        resolve(blob);
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 /* Grading now comes from admin-configurable tables (CACHE.gradeBands,
    CACHE.divisionBands, CACHE.nurseryBands) loaded in loadAllData(). */
 function gradeFor(score){
@@ -1003,10 +1033,11 @@ async function saveStudent(id){
   const fileInput = document.getElementById('f_photo');
   if(fileInput.files && fileInput.files[0]){
     errEl.style.color = 'var(--ink-soft)';
-    errEl.textContent = 'Uploading photo…';
-    const file = fileInput.files[0];
-    const path = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'')}`;
-    const { error: upErr } = await sb.storage.from('student-photos').upload(path, file, { upsert:true });
+    errEl.textContent = 'Compressing and uploading photo…';
+    let file = fileInput.files[0];
+    try{ file = await compressImage(file, 400, 0.75); } catch(e){ /* fall back to original file if compression fails */ }
+    const path = `${Date.now()}.jpg`;
+    const { error: upErr } = await sb.storage.from('student-photos').upload(path, file, { upsert:true, contentType:'image/jpeg' });
     if(upErr){ errEl.style.color='var(--pen-red)'; errEl.textContent = 'Photo upload failed: ' + upErr.message; return; }
     const { data: pub } = sb.storage.from('student-photos').getPublicUrl(path);
     photo_url = pub.publicUrl;
@@ -1944,10 +1975,11 @@ async function saveSettings(){
   const fileInput = document.getElementById('s_logo_file');
   if(fileInput.files && fileInput.files[0]){
     errEl.style.color = 'var(--ink-soft)';
-    errEl.textContent = 'Uploading logo…';
-    const file = fileInput.files[0];
-    const path = `logo_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'')}`;
-    const { error: upErr } = await sb.storage.from('school-assets').upload(path, file, { upsert:true });
+    errEl.textContent = 'Compressing and uploading logo…';
+    let file = fileInput.files[0];
+    try{ file = await compressImage(file, 500, 0.8); } catch(e){ /* fall back to original file if compression fails */ }
+    const path = `logo_${Date.now()}.jpg`;
+    const { error: upErr } = await sb.storage.from('school-assets').upload(path, file, { upsert:true, contentType:'image/jpeg' });
     if(upErr){ errEl.style.color='var(--pen-red)'; errEl.textContent = 'Logo upload failed: ' + upErr.message; return; }
     const { data: pub } = sb.storage.from('school-assets').getPublicUrl(path);
     logo_url = pub.publicUrl;
