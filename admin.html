@@ -1353,8 +1353,10 @@ async function adminSaveMark(studentId, subjectId, value){
   if(val===''){ return; }
   const score = parseFloat(val);
   if(isNaN(score)||score<0||score>100){ alert('Score must be between 0 and 100.'); return; }
+  const student = CACHE.students.find(s=>s.id===studentId);
   const { error } = await sb.from('marks').upsert({
-    student_id: studentId, subject_id: subjectId, term_id: reportTerm, assessment_type: 'eot', score, entered_by: CURRENT_USER.id
+    student_id: studentId, subject_id: subjectId, term_id: reportTerm, assessment_type: 'eot', score, entered_by: CURRENT_USER.id,
+    class_id_at_entry: student?.class_id || null, stream_id_at_entry: student?.stream_id || null,
   }, { onConflict:'student_id,subject_id,term_id,assessment_type' });
   if(error){ alert('Could not save: ' + error.message); }
 }
@@ -1594,10 +1596,18 @@ function buildNurseryReportHTML(student, marksAll, commentRow, term, posInfo){
 
 /* Picks the right template based on the student's class's report level */
 function buildReportCardHTML(student, marksAll, commentRow, term, posInfo){
-  const cls = CACHE.classes.find(c=>c.id===student.class_id);
+  // Use the class the student was actually IN when these marks were
+  // recorded (not their current class) — matters once they've been
+  // promoted, so an old report card still uses the right template
+  // and shows the class they were actually in that term.
+  const marks = marksAll || [];
+  const historicalClassId = marks.find(m=>m.class_id_at_entry)?.class_id_at_entry || student.class_id;
+  const historicalStreamId = marks.find(m=>m.class_id_at_entry)?.stream_id_at_entry ?? student.stream_id;
+  const cls = CACHE.classes.find(c=>c.id===historicalClassId);
   const level = cls?.level;
-  if(level === 'nursery') return buildNurseryReportHTML(student, marksAll||[], commentRow, term, posInfo);
-  return buildPrimaryReportHTML(student, marksAll||[], commentRow, term, posInfo, level==='upper_primary');
+  const displayStudent = { ...student, class_id: historicalClassId, stream_id: historicalStreamId };
+  if(level === 'nursery') return buildNurseryReportHTML(displayStudent, marks, commentRow, term, posInfo);
+  return buildPrimaryReportHTML(displayStudent, marks, commentRow, term, posInfo, level==='upper_primary');
 }
 
 function ordinal(n){
